@@ -31,6 +31,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -39,6 +40,14 @@ EMAIL_CONFIG_PATH = BASE_DIR / "email_config.json"
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "event-guest-qr-dev-key")
+# Needed on Render so CSS/JS URLs use https (avoids "broken"/unstyled pages)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+# Secure cookies on HTTPS hosts (Render). Keep off for local http:// testing.
+_public = os.environ.get("PUBLIC_BASE_URL", "")
+_on_render = bool(os.environ.get("RENDER"))
+app.config["SESSION_COOKIE_SECURE"] = _on_render or _public.startswith("https://")
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
 
 # Staff login (change before real use)
 STAFF_USERNAME = os.environ.get("STAFF_USERNAME", "staff")

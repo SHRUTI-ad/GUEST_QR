@@ -5,7 +5,6 @@
   --bg: #f3f6fb;
   --card: #ffffff;
   --accent: #0f6e56;
-  --accent-soft: #e6f4ef;
   --warn: #9a3412;
   --warn-soft: #ffedd5;
   --bad: #9f1239;
@@ -17,6 +16,10 @@
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -40,9 +43,9 @@ a:hover {
 }
 
 .wrap {
-  width: min(960px, calc(100% - 2rem));
+  width: min(960px, calc(100% - 1.25rem));
   margin: 0 auto;
-  padding: 1.5rem 0 3rem;
+  padding: 1rem 0 2.5rem;
 }
 
 .topbar {
@@ -50,7 +53,7 @@ a:hover {
   justify-content: space-between;
   gap: 1rem;
   align-items: flex-start;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
 }
 
 .brand {
@@ -63,13 +66,14 @@ a:hover {
 
 h1 {
   margin: 0;
-  font-size: clamp(1.6rem, 3vw, 2.2rem);
+  font-size: clamp(1.45rem, 5vw, 2.2rem);
   line-height: 1.15;
 }
 
 .sub {
   margin: 0.5rem 0 0;
   color: var(--muted);
+  line-height: 1.45;
 }
 
 .actions {
@@ -85,12 +89,15 @@ h1 {
   gap: 0.4rem;
   border: 1px solid transparent;
   border-radius: 10px;
-  padding: 0.7rem 1rem;
+  padding: 0.85rem 1rem;
+  min-height: 48px;
   font-weight: 600;
+  font-size: 1rem;
   cursor: pointer;
   text-decoration: none;
   background: var(--accent);
   color: white;
+  touch-action: manipulation;
 }
 
 .btn:hover {
@@ -108,12 +115,20 @@ h1 {
   background: #c2410c;
 }
 
+.btn-block {
+  width: 100%;
+}
+
 .panel {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 16px;
   box-shadow: var(--shadow);
   padding: 1.25rem;
+}
+
+.login-panel {
+  width: min(420px, 100%);
 }
 
 .stats {
@@ -133,9 +148,15 @@ h1 {
   color: var(--muted);
 }
 
-label {
+.field {
   display: grid;
   gap: 0.35rem;
+}
+
+.field-label {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 600;
 }
 
 code {
@@ -188,6 +209,7 @@ th {
   border-radius: 999px;
   font-size: 0.8rem;
   font-weight: 600;
+  margin: 0.1rem 0.15rem 0.1rem 0;
 }
 
 .badge.ok {
@@ -207,36 +229,9 @@ th {
 }
 
 .row-actions .btn {
-  padding: 0.45rem 0.7rem;
-  font-size: 0.85rem;
-}
-
-.ticket {
-  display: grid;
-  gap: 1rem;
-}
-
-.ticket-hero {
-  background: linear-gradient(135deg, #0f6e56, #134e4a 55%, #1e3a5f);
-  color: white;
-  border-radius: 18px;
-  padding: 1.4rem;
-  box-shadow: var(--shadow);
-}
-
-.ticket-hero h1 {
-  font-size: 1.7rem;
-}
-
-.ticket-hero p {
-  margin: 0.4rem 0 0;
-  opacity: 0.92;
-}
-
-.ticket-grid {
-  display: grid;
-  grid-template-columns: 1.2fr 0.8fr;
-  gap: 1rem;
+  padding: 0.55rem 0.75rem;
+  min-height: 42px;
+  font-size: 0.9rem;
 }
 
 .meta dt {
@@ -248,19 +243,7 @@ th {
 .meta dd {
   margin: 0.15rem 0 0;
   font-weight: 600;
-}
-
-.qr-box {
-  text-align: center;
-}
-
-.qr-box img {
-  width: min(220px, 100%);
-  height: auto;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 0.5rem;
-  background: white;
+  word-break: break-word;
 }
 
 .status-banner {
@@ -268,6 +251,7 @@ th {
   padding: 1rem 1.1rem;
   margin-bottom: 1rem;
   font-weight: 600;
+  line-height: 1.4;
 }
 
 .status-banner.ok {
@@ -287,17 +271,20 @@ th {
 
 .form-row {
   display: grid;
-  gap: 0.6rem;
-  margin-top: 1rem;
+  gap: 0.85rem;
+  margin-top: 0.25rem;
 }
 
 input[type="text"],
-input[type="url"] {
+input[type="url"],
+input[type="password"] {
   width: 100%;
-  padding: 0.8rem 0.9rem;
+  padding: 0.9rem 0.95rem;
   border: 1px solid var(--line);
   border-radius: 10px;
   font: inherit;
+  font-size: 16px; /* prevents iOS zoom on focus */
+  background: #fff;
 }
 
 .help {
@@ -307,16 +294,29 @@ input[type="url"] {
 }
 
 @media (max-width: 720px) {
+  .wrap {
+    width: calc(100% - 1rem);
+    padding-top: 0.85rem;
+  }
+
   .topbar {
     flex-direction: column;
+  }
+
+  .actions {
+    width: 100%;
+  }
+
+  .actions .btn {
+    flex: 1 1 calc(50% - 0.4rem);
   }
 
   .stats {
     grid-template-columns: 1fr 1fr;
   }
 
-  .ticket-grid {
-    grid-template-columns: 1fr;
+  .panel {
+    padding: 1rem;
   }
 
   table,
@@ -333,13 +333,13 @@ input[type="url"] {
   }
 
   tr {
-    padding: 0.75rem 0;
+    padding: 0.85rem 0;
     border-bottom: 1px solid var(--line);
   }
 
   td {
     border: 0;
-    padding: 0.2rem 0;
+    padding: 0.25rem 0;
   }
 
   td::before {
@@ -348,5 +348,19 @@ input[type="url"] {
     color: var(--muted);
     font-size: 0.8rem;
     margin-bottom: 0.1rem;
+  }
+
+  .checkin-actions,
+  .actions form {
+    width: 100%;
+  }
+
+  .actions form .btn,
+  .actions > form {
+    width: 100%;
+  }
+
+  .actions > form .btn {
+    width: 100%;
   }
 }

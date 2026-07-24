@@ -9,23 +9,24 @@
     </div>
   </div>
 
-  <div class="panel" style="max-width: 420px;">
+  <div class="panel login-panel">
     {% if error %}
       <div class="status-banner invalid">{{ error }}</div>
     {% endif %}
     <form method="post" class="form-row">
-      <label>
-        <span class="help">Username</span>
+      <label class="field">
+        <span class="field-label">Username</span>
         <input type="text" name="username" value="staff" autocomplete="username" required />
       </label>
-      <label>
-        <span class="help">Password</span>
+      <label class="field">
+        <span class="field-label">Password</span>
         <input type="password" name="password" autocomplete="current-password" required />
       </label>
-      <button class="btn" type="submit">Sign in</button>
+      <button class="btn btn-block" type="submit">Sign in</button>
     </form>
     <p class="help" style="margin-top: 1rem;">
-      Default: <strong>staff</strong> / <strong>event123</strong>
+      Default local login: <strong>staff</strong> / <strong>event123</strong>.
+      On Render use the password you set in Environment.
     </p>
   </div>
 {% endblock %}

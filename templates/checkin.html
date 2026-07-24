@@ -61,23 +61,23 @@
         </dd>
       </dl>
 
-      <div class="actions" style="margin-top: 1.25rem;">
+      <div class="actions checkin-actions" style="margin-top: 1.25rem;">
         {% if not guest.arrived %}
-          <form method="post">
+          <form method="post" style="flex: 1 1 100%;">
             <input type="hidden" name="action" value="arrive" />
-            <button class="btn secondary" type="submit">Mark guest arrived</button>
+            <button class="btn secondary btn-block" type="submit">Mark guest arrived</button>
           </form>
         {% endif %}
         {% if not guest.lunch_claimed %}
-          <form method="post">
+          <form method="post" style="flex: 1 1 100%;">
             <input type="hidden" name="action" value="lunch" />
-            <button class="btn warn" type="submit">Mark lunch claimed</button>
+            <button class="btn warn btn-block" type="submit">Mark lunch claimed</button>
           </form>
         {% endif %}
         {% if not guest.arrived or not guest.lunch_claimed %}
-          <form method="post">
+          <form method="post" style="flex: 1 1 100%;">
             <input type="hidden" name="action" value="both" />
-            <button class="btn" type="submit">Mark arrived + lunch</button>
+            <button class="btn btn-block" type="submit">Mark arrived + lunch</button>
           </form>
         {% endif %}
       </div>
