@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: guest-qr
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: STAFF_USERNAME
+        value: staff
+      - key: STAFF_PASSWORD
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false

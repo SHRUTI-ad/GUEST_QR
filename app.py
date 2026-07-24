@@ -501,6 +501,15 @@ def scan():
     return render_template("scan.html")
 
 
+@app.route("/health")
+def health():
+    return {"status": "ok"}
+
+
+# Runs for both `python app.py` and gunicorn (Render / production)
+init_db()
+
+
 if __name__ == "__main__":
-    init_db()
-    app.run(host="0.0.0.0", port=5050, debug=True)
+    port = int(os.environ.get("PORT", 5050))
+    app.run(host="0.0.0.0", port=port, debug=os.environ.get("FLASK_DEBUG") == "1")
