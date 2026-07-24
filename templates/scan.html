@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Scan · {{ event_name }}{% endblock %}
+{% block content %}
+  <div class="topbar">
+    <div>
+      <p class="brand">Staff desk</p>
+      <h1>Scan guest QR</h1>
+      <p class="sub">Stay logged in on this phone, then scan the guest’s QR with the camera.</p>
+    </div>
+    <div class="actions">
+      <a class="btn secondary" href="{{ url_for('home') }}">Guest list</a>
+    </div>
+  </div>
+
+  <div class="panel">
+    <p class="help">
+      <strong>Normal use:</strong> open the phone camera → point at the guest’s QR PDF →
+      the check-in page opens with their details and mark options.
+    </p>
+    <p class="help">
+      If the camera does not open the page, paste the scanned value here:
+    </p>
+    <form class="form-row" id="scan-form">
+      <input
+        id="scan-input"
+        type="text"
+        placeholder="Paste scanned URL or token"
+        autocomplete="off"
+      />
+      <button class="btn" type="submit">Open check-in</button>
+    </form>
+  </div>
+
+  <script>
+    document.getElementById("scan-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      const raw = document.getElementById("scan-input").value.trim();
+      if (!raw) return;
+
+      let token = raw;
+      const match = raw.match(/\/checkin\/([a-f0-9]{32})/i);
+      if (match) {
+        token = match[1];
+      } else if (!/^[a-f0-9]{32}$/i.test(raw)) {
+        alert("Could not find a guest token.");
+        return;
+      }
+      window.location.href = "/checkin/" + token;
+    });
+  </script>
+{% endblock %}

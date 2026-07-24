@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Check-in · {{ event_name }}{% endblock %}
+{% block content %}
+  <div class="topbar">
+    <div>
+      <p class="brand">Gate / lunch desk</p>
+      <h1>Guest check-in</h1>
+      <p class="sub">{{ event_name }}</p>
+    </div>
+    <div class="actions">
+      <a class="btn secondary" href="{{ url_for('scan') }}">Scan another</a>
+      <a class="btn secondary" href="{{ url_for('home') }}">Guest list</a>
+    </div>
+  </div>
+
+  {% if status == "invalid" or not guest %}
+    <div class="status-banner invalid">Unknown QR — this guest is not on the list.</div>
+  {% else %}
+    {% if message %}
+      <div class="status-banner {% if 'already' in message|lower %}claimed{% else %}ok{% endif %}">
+        {{ message }}
+      </div>
+    {% elif guest.lunch_claimed %}
+      <div class="status-banner claimed">
+        Already completed
+        {% if guest.arrived_at %} · arrived {{ guest.arrived_at }}{% endif %}
+        {% if guest.claimed_at %} · lunch {{ guest.claimed_at }}{% endif %}
+      </div>
+    {% elif guest.arrived %}
+      <div class="status-banner arrived">Guest arrived — lunch not claimed yet.</div>
+    {% else %}
+      <div class="status-banner ok">Valid guest — mark arrival and/or lunch below.</div>
+    {% endif %}
+
+    <div class="panel">
+      <h1 style="font-size: 1.8rem; margin-bottom: 0.5rem;">{{ guest.name }}</h1>
+      <dl class="meta">
+        <dt>Email</dt>
+        <dd>{{ guest.email }}</dd>
+        <dt>Phone</dt>
+        <dd>{{ guest.phone }}</dd>
+        <dt>Meal</dt>
+        <dd>{{ guest.meal }}</dd>
+        <dt>Table</dt>
+        <dd>{{ guest.table_no }}</dd>
+        <dt>Arrived</dt>
+        <dd>
+          {% if guest.arrived %}
+            Yes{% if guest.arrived_at %} · {{ guest.arrived_at }}{% endif %}
+          {% else %}
+            No
+          {% endif %}
+        </dd>
+        <dt>Lunch</dt>
+        <dd>
+          {% if guest.lunch_claimed %}
+            Claimed{% if guest.claimed_at %} · {{ guest.claimed_at }}{% endif %}
+          {% else %}
+            Not claimed
+          {% endif %}
+        </dd>
+      </dl>
+
+      <div class="actions" style="margin-top: 1.25rem;">
+        {% if not guest.arrived %}
+          <form method="post">
+            <input type="hidden" name="action" value="arrive" />
+            <button class="btn secondary" type="submit">Mark guest arrived</button>
+          </form>
+        {% endif %}
+        {% if not guest.lunch_claimed %}
+          <form method="post">
+            <input type="hidden" name="action" value="lunch" />
+            <button class="btn warn" type="submit">Mark lunch claimed</button>
+          </form>
+        {% endif %}
+        {% if not guest.arrived or not guest.lunch_claimed %}
+          <form method="post">
+            <input type="hidden" name="action" value="both" />
+            <button class="btn" type="submit">Mark arrived + lunch</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+{% endblock %}

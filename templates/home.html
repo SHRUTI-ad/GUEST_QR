@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Guest list · {{ event_name }}{% endblock %}
+{% block content %}
+  <div class="topbar">
+    <div>
+      <p class="brand">Staff desk</p>
+      <h1>{{ event_name }}</h1>
+      <p class="sub">{{ event_date }} · {{ event_venue }}</p>
+    </div>
+    <div class="actions">
+      <a class="btn secondary" href="{{ url_for('scan') }}">Scan helper</a>
+      <a class="btn secondary" href="{{ url_for('logout') }}">Log out</a>
+    </div>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, msg in messages %}
+      <div class="status-banner {{ 'ok' if category == 'ok' else 'invalid' }}">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <div class="stats">
+    <div class="stat"><span>Guests</span><strong>{{ total }}</strong></div>
+    <div class="stat"><span>Arrived</span><strong>{{ arrived }}</strong></div>
+    <div class="stat"><span>Lunch claimed</span><strong>{{ claimed }}</strong></div>
+    <div class="stat"><span>PDF emailed</span><strong>{{ sent }}</strong></div>
+  </div>
+
+  <div class="panel" style="margin-bottom: 1rem;">
+    <p class="help" style="margin-top: 0;">
+      <strong>Flow:</strong> Send each guest their unique QR PDF (email or download) →
+      at the gate, scan their QR on a logged-in staff phone → mark arrived / lunch.
+      Guests only need the QR — no website link for them.
+    </p>
+    {% if email_ready %}
+      <form method="post" action="{{ url_for('send_all') }}" style="margin-top: 0.75rem;">
+        <button class="btn" type="submit"
+          onclick="return confirm('Email unique QR PDFs to all {{ total }} guests?');">
+          Send QR PDF to all guests (1 click)
+        </button>
+      </form>
+    {% else %}
+      <p class="help" style="margin-top: 0.75rem;">
+        To enable 1-click email: copy <code>email_config.example.json</code> to
+        <code>email_config.json</code> and add your SMTP details (Gmail app password works).
+        Until then, use <strong>PDF</strong> to download and send manually.
+      </p>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <table>
+      <thead>
+        <tr>
+          <th>Guest</th>
+          <th>Meal / Table</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for g in guests %}
+        <tr>
+          <td data-label="Guest">
+            <strong>{{ g.name }}</strong><br />
+            <span class="help">{{ g.email }} · {{ g.phone }}</span>
+          </td>
+          <td data-label="Meal / Table">{{ g.meal }} · {{ g.table_no }}</td>
+          <td data-label="Status">
+            {% if g.arrived %}
+              <span class="badge ok">Arrived</span>
+            {% else %}
+              <span class="badge">Not arrived</span>
+            {% endif %}
+            {% if g.lunch_claimed %}
+              <span class="badge claimed">Lunch claimed</span>
+            {% endif %}
+            {% if g.pdf_sent %}
+              <span class="badge ok">PDF sent</span>
+            {% endif %}
+          </td>
+          <td data-label="Actions">
+            <div class="row-actions">
+              <a class="btn secondary" href="{{ url_for('pdf_ticket', token=g.token) }}">PDF</a>
+              {% if email_ready %}
+              <form method="post" action="{{ url_for('send_one', guest_id=g.id) }}" style="display:inline;">
+                <button class="btn secondary" type="submit">Email QR</button>
+              </form>
+              {% endif %}
+              <a class="btn" href="{{ url_for('checkin', token=g.token) }}">Check-in</a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}
