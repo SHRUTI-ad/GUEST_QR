@@ -119,6 +119,8 @@ def init_db() -> None:
     _ensure_column(conn, "guests", "arrived_at", "TEXT")
     _ensure_column(conn, "guests", "pdf_sent", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "guests", "pdf_sent_at", "TEXT")
+    _ensure_column(conn, "guests", "dinner_claimed", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "guests", "dinner_claimed_at", "TEXT")
 
     count = conn.execute("SELECT COUNT(*) AS c FROM guests").fetchone()["c"]
     if count == 0:
@@ -245,13 +247,13 @@ def build_ticket_pdf(guest: sqlite3.Row, qr_url: str) -> io.BytesIO:
 
     pdf.setFont("Helvetica-Bold", 11)
     pdf.setFillColorRGB(0.15, 0.15, 0.15)
-    pdf.drawCentredString(width / 2, 42 * mm, "Show this QR at entry")
+    pdf.drawCentredString(width / 2, 42 * mm, "Show this QR at lunch and dinner")
     pdf.setFont("Helvetica", 9)
     pdf.setFillColorRGB(0.4, 0.4, 0.4)
     pdf.drawCentredString(
         width / 2,
         34 * mm,
-        "Personal pass — do not share. Valid for one entry and one lunch.",
+        "One personal QR — valid for 1 lunch + 1 dinner. Do not share.",
     )
 
     pdf.showPage()
@@ -310,9 +312,10 @@ def email_is_configured() -> bool:
 def _email_body(guest: sqlite3.Row) -> str:
     return (
         f"Hi {guest['name']},\n\n"
-        f"Please find your entry & lunch QR pass attached for {EVENT_NAME}.\n"
+        f"Please find your QR pass attached for {EVENT_NAME}.\n"
         f"{EVENT_DATE}\n{EVENT_VENUE}\n\n"
-        "Show the QR code at the entrance. You do not need to open any link.\n\n"
+        "Show the same QR at lunch and again at dinner.\n"
+        "You do not need to open any link.\n\n"
         "See you there!\n"
     )
 
@@ -464,14 +467,16 @@ def home():
     conn = get_db()
     guests = conn.execute("SELECT * FROM guests ORDER BY id").fetchall()
     arrived = sum(1 for g in guests if g["arrived"])
-    claimed = sum(1 for g in guests if g["lunch_claimed"])
+    lunch_claimed = sum(1 for g in guests if g["lunch_claimed"])
+    dinner_claimed = sum(1 for g in guests if g["dinner_claimed"])
     sent = sum(1 for g in guests if g["pdf_sent"])
     conn.close()
     return render_template(
         "home.html",
         guests=guests,
         arrived=arrived,
-        claimed=claimed,
+        lunch_claimed=lunch_claimed,
+        dinner_claimed=dinner_claimed,
         sent=sent,
         total=len(guests),
     )
@@ -548,6 +553,14 @@ def send_all():
     return redirect(url_for("home"))
 
 
+def _mark_arrived_if_needed(conn: sqlite3.Connection, guest: sqlite3.Row, token: str, now: str) -> None:
+    if not guest["arrived"]:
+        conn.execute(
+            "UPDATE guests SET arrived = 1, arrived_at = ? WHERE token = ?",
+            (now, token),
+        )
+
+
 @app.route("/checkin/<token>", methods=["GET", "POST"])
 @login_required
 def checkin(token: str):
@@ -574,35 +587,26 @@ def checkin(token: str):
             if guest["lunch_claimed"]:
                 message = "Lunch was already claimed."
             else:
-                # Arrival implied when lunch is given
-                if not guest["arrived"]:
-                    conn.execute(
-                        """
-                        UPDATE guests
-                        SET arrived = 1, arrived_at = ?, lunch_claimed = 1, claimed_at = ?
-                        WHERE token = ?
-                        """,
-                        (now, now, token),
-                    )
-                else:
-                    conn.execute(
-                        "UPDATE guests SET lunch_claimed = 1, claimed_at = ? WHERE token = ?",
-                        (now, token),
-                    )
+                _mark_arrived_if_needed(conn, guest, token, now)
+                conn.execute(
+                    "UPDATE guests SET lunch_claimed = 1, claimed_at = ? WHERE token = ?",
+                    (now, token),
+                )
                 message = "Lunch marked as claimed."
-        elif action == "both":
-            conn.execute(
-                """
-                UPDATE guests
-                SET arrived = 1,
-                    arrived_at = COALESCE(arrived_at, ?),
-                    lunch_claimed = 1,
-                    claimed_at = ?
-                WHERE token = ?
-                """,
-                (now, now, token),
-            )
-            message = "Guest arrived + lunch claimed."
+        elif action == "dinner":
+            if guest["dinner_claimed"]:
+                message = "Dinner was already claimed."
+            else:
+                _mark_arrived_if_needed(conn, guest, token, now)
+                conn.execute(
+                    """
+                    UPDATE guests
+                    SET dinner_claimed = 1, dinner_claimed_at = ?
+                    WHERE token = ?
+                    """,
+                    (now, token),
+                )
+                message = "Dinner marked as claimed."
         else:
             message = "Unknown action."
 
@@ -610,9 +614,9 @@ def checkin(token: str):
         conn.close()
         guest = get_guest_by_token(token)
 
-    if guest["lunch_claimed"]:
+    if guest["lunch_claimed"] and guest["dinner_claimed"]:
         status = "claimed"
-    elif guest["arrived"]:
+    elif guest["lunch_claimed"] or guest["dinner_claimed"] or guest["arrived"]:
         status = "arrived"
     else:
         status = "ok"

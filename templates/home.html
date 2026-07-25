@@ -22,15 +22,15 @@
   <div class="stats">
     <div class="stat"><span>Guests</span><strong>{{ total }}</strong></div>
     <div class="stat"><span>Arrived</span><strong>{{ arrived }}</strong></div>
-    <div class="stat"><span>Lunch claimed</span><strong>{{ claimed }}</strong></div>
+    <div class="stat"><span>Lunch</span><strong>{{ lunch_claimed }}</strong></div>
+    <div class="stat"><span>Dinner</span><strong>{{ dinner_claimed }}</strong></div>
     <div class="stat"><span>PDF emailed</span><strong>{{ sent }}</strong></div>
   </div>
 
   <div class="panel" style="margin-bottom: 1rem;">
     <p class="help" style="margin-top: 0;">
-      <strong>Flow:</strong> Send each guest their unique QR PDF (email or download) →
-      at the gate, scan their QR on a logged-in staff phone → mark arrived / lunch.
-      Guests only need the QR — no website link for them.
+      <strong>Flow:</strong> Send each guest one QR PDF once → scan the same QR at lunch
+      and again at dinner → mark each meal separately. Guests do not need any website link.
     </p>
     <div class="actions" style="margin-top: 0.75rem;">
       {% if email_ready %}
@@ -84,7 +84,10 @@
               <span class="badge">Not arrived</span>
             {% endif %}
             {% if g.lunch_claimed %}
-              <span class="badge claimed">Lunch claimed</span>
+              <span class="badge claimed">Lunch</span>
+            {% endif %}
+            {% if g.dinner_claimed %}
+              <span class="badge claimed">Dinner</span>
             {% endif %}
             {% if g.pdf_sent %}
               <span class="badge ok">PDF sent</span>

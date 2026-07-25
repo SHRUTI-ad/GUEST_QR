@@ -3,9 +3,9 @@
 {% block content %}
   <div class="topbar">
     <div>
-      <p class="brand">Gate / lunch desk</p>
+      <p class="brand">Gate / meal desk</p>
       <h1>Guest check-in</h1>
-      <p class="sub">{{ event_name }}</p>
+      <p class="sub">{{ event_name }} · same QR for lunch &amp; dinner</p>
     </div>
     <div class="actions">
       <a class="btn secondary" href="{{ url_for('scan') }}">Scan another</a>
@@ -20,16 +20,20 @@
       <div class="status-banner {% if 'already' in message|lower %}claimed{% else %}ok{% endif %}">
         {{ message }}
       </div>
-    {% elif guest.lunch_claimed %}
+    {% elif guest.lunch_claimed and guest.dinner_claimed %}
       <div class="status-banner claimed">
-        Already completed
-        {% if guest.arrived_at %} · arrived {{ guest.arrived_at }}{% endif %}
+        Both meals done
         {% if guest.claimed_at %} · lunch {{ guest.claimed_at }}{% endif %}
+        {% if guest.dinner_claimed_at %} · dinner {{ guest.dinner_claimed_at }}{% endif %}
       </div>
+    {% elif guest.lunch_claimed %}
+      <div class="status-banner arrived">Lunch claimed — dinner still available on this same QR.</div>
+    {% elif guest.dinner_claimed %}
+      <div class="status-banner arrived">Dinner claimed — lunch still available on this same QR.</div>
     {% elif guest.arrived %}
-      <div class="status-banner arrived">Guest arrived — lunch not claimed yet.</div>
+      <div class="status-banner arrived">Guest arrived — mark lunch or dinner below.</div>
     {% else %}
-      <div class="status-banner ok">Valid guest — mark arrival and/or lunch below.</div>
+      <div class="status-banner ok">Valid guest — mark arrival, lunch, or dinner.</div>
     {% endif %}
 
     <div class="panel">
@@ -39,7 +43,7 @@
         <dd>{{ guest.email }}</dd>
         <dt>Phone</dt>
         <dd>{{ guest.phone }}</dd>
-        <dt>Meal</dt>
+        <dt>Preference</dt>
         <dd>{{ guest.meal }}</dd>
         <dt>Table</dt>
         <dd>{{ guest.table_no }}</dd>
@@ -59,6 +63,14 @@
             Not claimed
           {% endif %}
         </dd>
+        <dt>Dinner</dt>
+        <dd>
+          {% if guest.dinner_claimed %}
+            Claimed{% if guest.dinner_claimed_at %} · {{ guest.dinner_claimed_at }}{% endif %}
+          {% else %}
+            Not claimed
+          {% endif %}
+        </dd>
       </dl>
 
       <div class="actions checkin-actions" style="margin-top: 1.25rem;">
@@ -74,10 +86,10 @@
             <button class="btn warn btn-block" type="submit">Mark lunch claimed</button>
           </form>
         {% endif %}
-        {% if not guest.arrived or not guest.lunch_claimed %}
+        {% if not guest.dinner_claimed %}
           <form method="post" style="flex: 1 1 100%;">
-            <input type="hidden" name="action" value="both" />
-            <button class="btn btn-block" type="submit">Mark arrived + lunch</button>
+            <input type="hidden" name="action" value="dinner" />
+            <button class="btn btn-block" type="submit">Mark dinner claimed</button>
           </form>
         {% endif %}
       </div>
