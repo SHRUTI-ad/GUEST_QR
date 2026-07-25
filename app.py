@@ -336,6 +336,8 @@ def _send_via_resend(cfg: dict, guest: sqlite3.Row, pdf_bytes: bytes, filename: 
         headers={
             "Authorization": f"Bearer {cfg['api_key']}",
             "Content-Type": "application/json",
+            # Required by Resend — missing User-Agent causes 403 error 1010
+            "User-Agent": "EventGuestQR/1.0",
         },
         method="POST",
     )
