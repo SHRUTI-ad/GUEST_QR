@@ -74,7 +74,7 @@ SAMPLE_GUESTS = [
     },
     {
         "name": "Vishal Patel",
-        "email": "vickyashokpatel123@gmail.com",
+        "email": "vickypatel123@gmail.com",
         "phone": "8866325109",
         "meal": "Non-Vegetarian",
         "table_no": "T2",
