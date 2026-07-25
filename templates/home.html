@@ -32,18 +32,29 @@
       at the gate, scan their QR on a logged-in staff phone → mark arrived / lunch.
       Guests only need the QR — no website link for them.
     </p>
-    {% if email_ready %}
-      <form method="post" action="{{ url_for('send_all') }}" style="margin-top: 0.75rem;">
-        <button class="btn" type="submit"
-          onclick="return confirm('Email unique QR PDFs to all {{ total }} guests?');">
-          Send QR PDF to all guests (1 click)
+    <div class="actions" style="margin-top: 0.75rem;">
+      {% if email_ready %}
+        <form method="post" action="{{ url_for('send_all') }}">
+          <button class="btn" type="submit"
+            onclick="return confirm('Email unique QR PDFs to all {{ total }} guests?');">
+            Send QR PDF to all guests (1 click)
+          </button>
+        </form>
+      {% endif %}
+      <form method="post" action="{{ url_for('reset_guests') }}">
+        <button class="btn secondary" type="submit"
+          onclick="return confirm('Replace current list with the 2 test guests (Shruti + Vishal)?');">
+          Load test guests
         </button>
       </form>
-    {% else %}
+    </div>
+    {% if not email_ready %}
       <p class="help" style="margin-top: 0.75rem;">
-        To enable 1-click email: copy <code>email_config.example.json</code> to
-        <code>email_config.json</code> and add your SMTP details (Gmail app password works).
-        Until then, use <strong>PDF</strong> to download and send manually.
+        Email not configured. On Render free plan, Gmail SMTP is often blocked —
+        easiest fix: add <code>RESEND_API_KEY</code> from
+        <a href="https://resend.com" target="_blank" rel="noopener">resend.com</a>
+        (free). Or set <code>SMTP_USER</code> + <code>SMTP_PASSWORD</code>.
+        Until then, use <strong>PDF</strong> and send manually.
       </p>
     {% endif %}
   </div>

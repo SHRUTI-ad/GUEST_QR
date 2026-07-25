@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
 import smtplib
 import sqlite3
+import ssl
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime
-from email.mime.application import MIMEApplication
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+from email.message import EmailMessage
 from functools import wraps
 from pathlib import Path
 
@@ -260,59 +262,151 @@ def build_ticket_pdf(guest: sqlite3.Row, qr_url: str) -> io.BytesIO:
 
 def load_email_config() -> dict | None:
     """Prefer env vars (Render), fall back to local email_config.json."""
-    env_user = os.environ.get("SMTP_USER", "").strip()
-    env_pass = os.environ.get("SMTP_PASSWORD", "").strip()
-    if env_user and env_pass:
+    resend_key = os.environ.get("RESEND_API_KEY", "").strip()
+    if resend_key:
         return {
-            "smtp_host": os.environ.get("SMTP_HOST", "smtp.gmail.com"),
-            "smtp_port": int(os.environ.get("SMTP_PORT", "587")),
+            "provider": "resend",
+            "api_key": resend_key,
+            "from_email": os.environ.get(
+                "SMTP_FROM_EMAIL", "onboarding@resend.dev"
+            ).strip(),
+            "from_name": os.environ.get("SMTP_FROM_NAME", "Event Desk").strip(),
+        }
+
+    env_user = os.environ.get("SMTP_USER", "").strip()
+    env_pass = os.environ.get("SMTP_PASSWORD", "").strip().replace(" ", "")
+    if env_user and env_pass:
+        port_raw = os.environ.get("SMTP_PORT", "587").strip() or "587"
+        try:
+            port = int(port_raw)
+        except ValueError as exc:
+            raise RuntimeError(f"SMTP_PORT must be a number, got {port_raw!r}") from exc
+        return {
+            "provider": "smtp",
+            "smtp_host": os.environ.get("SMTP_HOST", "smtp.gmail.com").strip(),
+            "smtp_port": port,
             "smtp_user": env_user,
             "smtp_password": env_pass,
-            "from_email": os.environ.get("SMTP_FROM_EMAIL", env_user),
-            "from_name": os.environ.get("SMTP_FROM_NAME", "Event Desk"),
+            "from_email": os.environ.get("SMTP_FROM_EMAIL", env_user).strip(),
+            "from_name": os.environ.get("SMTP_FROM_NAME", "Event Desk").strip(),
         }
     if EMAIL_CONFIG_PATH.exists():
         with EMAIL_CONFIG_PATH.open(encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        data["provider"] = data.get("provider", "smtp")
+        if data.get("smtp_password"):
+            data["smtp_password"] = str(data["smtp_password"]).replace(" ", "")
+        return data
     return None
 
 
 def email_is_configured() -> bool:
-    return load_email_config() is not None
+    try:
+        return load_email_config() is not None
+    except Exception:  # noqa: BLE001
+        return False
 
 
-def send_pdf_email(guest: sqlite3.Row, pdf_buffer: io.BytesIO) -> None:
-    cfg = load_email_config()
-    if not cfg:
-        raise RuntimeError(
-            "Email not configured. On Render set SMTP_USER + SMTP_PASSWORD "
-            "(Gmail App Password). Locally copy email_config.example.json to "
-            "email_config.json."
-        )
-
-    msg = MIMEMultipart()
-    msg["Subject"] = f"Your QR pass — {EVENT_NAME}"
-    msg["From"] = f"{cfg.get('from_name', 'Event Desk')} <{cfg['from_email']}>"
-    msg["To"] = guest["email"]
-
-    body = (
+def _email_body(guest: sqlite3.Row) -> str:
+    return (
         f"Hi {guest['name']},\n\n"
         f"Please find your entry & lunch QR pass attached for {EVENT_NAME}.\n"
         f"{EVENT_DATE}\n{EVENT_VENUE}\n\n"
         "Show the QR code at the entrance. You do not need to open any link.\n\n"
         "See you there!\n"
     )
-    msg.attach(MIMEText(body, "plain"))
 
+
+def _send_via_resend(cfg: dict, guest: sqlite3.Row, pdf_bytes: bytes, filename: str) -> None:
+    payload = {
+        "from": f"{cfg['from_name']} <{cfg['from_email']}>",
+        "to": [guest["email"]],
+        "subject": f"Your QR pass - {EVENT_NAME}",
+        "text": _email_body(guest),
+        "attachments": [
+            {
+                "filename": filename,
+                "content": base64.b64encode(pdf_bytes).decode("ascii"),
+            }
+        ],
+    }
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {cfg['api_key']}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            if resp.status >= 400:
+                raise RuntimeError(f"Resend HTTP {resp.status}")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:300]
+        raise RuntimeError(f"Resend error {exc.code}: {detail}") from exc
+
+
+def _send_via_smtp(cfg: dict, guest: sqlite3.Row, pdf_bytes: bytes, filename: str) -> None:
+    msg = EmailMessage()
+    msg["Subject"] = f"Your QR pass - {EVENT_NAME}"
+    msg["From"] = f"{cfg.get('from_name', 'Event Desk')} <{cfg['from_email']}>"
+    msg["To"] = guest["email"]
+    msg.set_content(_email_body(guest))
+    msg.add_attachment(
+        pdf_bytes,
+        maintype="application",
+        subtype="pdf",
+        filename=filename,
+    )
+
+    host = cfg["smtp_host"]
+    port = int(cfg["smtp_port"])
+    user = cfg["smtp_user"]
+    password = str(cfg["smtp_password"]).replace(" ", "")
+
+    try:
+        if port == 465:
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(host, port, timeout=45, context=context) as server:
+                server.login(user, password)
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=45) as server:
+                server.ehlo()
+                server.starttls(context=ssl.create_default_context())
+                server.ehlo()
+                server.login(user, password)
+                server.send_message(msg)
+    except smtplib.SMTPAuthenticationError as exc:
+        raise RuntimeError(
+            "Gmail login failed. Use a 16-char App Password (no spaces), "
+            "not your normal Gmail password."
+        ) from exc
+    except (smtplib.SMTPConnectError, TimeoutError, OSError) as exc:
+        raise RuntimeError(
+            "Could not connect to Gmail SMTP. Render free plans often block "
+            "port 587. Add RESEND_API_KEY instead (https://resend.com), or "
+            "download PDF and send manually."
+        ) from exc
+
+
+def send_pdf_email(guest: sqlite3.Row, pdf_buffer: io.BytesIO) -> None:
+    cfg = load_email_config()
+    if not cfg:
+        raise RuntimeError(
+            "Email not configured. Set SMTP_USER + SMTP_PASSWORD, or RESEND_API_KEY."
+        )
+
+    pdf_bytes = pdf_buffer.getvalue()
     filename = f"{guest['name'].replace(' ', '_')}_pass.pdf"
-    part = MIMEApplication(pdf_buffer.read(), Name=filename)
-    part["Content-Disposition"] = f'attachment; filename="{filename}"'
-    msg.attach(part)
+    provider = cfg.get("provider", "smtp")
 
-    with smtplib.SMTP(cfg["smtp_host"], int(cfg["smtp_port"])) as server:
-        server.starttls()
-        server.login(cfg["smtp_user"], cfg["smtp_password"])
-        server.send_message(msg)
+    if provider == "resend":
+        _send_via_resend(cfg, guest, pdf_bytes, filename)
+    else:
+        _send_via_smtp(cfg, guest, pdf_bytes, filename)
 
 
 def mark_pdf_sent(guest_id: int) -> None:
@@ -408,41 +502,47 @@ def pdf_ticket(token: str):
 @app.route("/send/<int:guest_id>", methods=["POST"])
 @login_required
 def send_one(guest_id: int):
-    guest = get_guest_by_id(guest_id)
-    if guest is None:
-        abort(404)
     try:
+        guest = get_guest_by_id(guest_id)
+        if guest is None:
+            flash("Guest not found.", "bad")
+            return redirect(url_for("home"))
         pdf_buffer = build_ticket_pdf(guest, qr_target_url(guest["token"]))
         send_pdf_email(guest, pdf_buffer)
         mark_pdf_sent(guest_id)
         flash(f"QR PDF sent to {guest['name']} ({guest['email']}).", "ok")
     except Exception as exc:  # noqa: BLE001 — show setup errors to staff
-        flash(f"Could not send to {guest['name']}: {exc}", "bad")
+        flash(f"Could not send email: {exc}", "bad")
     return redirect(url_for("home"))
 
 
 @app.route("/send-all", methods=["POST"])
 @login_required
 def send_all():
-    conn = get_db()
-    guests = conn.execute("SELECT * FROM guests ORDER BY id").fetchall()
-    conn.close()
+    try:
+        conn = get_db()
+        guests = conn.execute("SELECT * FROM guests ORDER BY id").fetchall()
+        conn.close()
 
-    ok_count = 0
-    errors = []
-    for guest in guests:
-        try:
-            pdf_buffer = build_ticket_pdf(guest, qr_target_url(guest["token"]))
-            send_pdf_email(guest, pdf_buffer)
-            mark_pdf_sent(guest["id"])
-            ok_count += 1
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"{guest['name']}: {exc}")
+        ok_count = 0
+        errors = []
+        for guest in guests:
+            try:
+                pdf_buffer = build_ticket_pdf(guest, qr_target_url(guest["token"]))
+                send_pdf_email(guest, pdf_buffer)
+                mark_pdf_sent(guest["id"])
+                ok_count += 1
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{guest['name']}: {exc}")
 
-    if ok_count:
-        flash(f"Sent QR PDFs to {ok_count} guest(s).", "ok")
-    if errors:
-        flash("Some failed — " + " | ".join(errors[:3]), "bad")
+        if ok_count:
+            flash(f"Sent QR PDFs to {ok_count} guest(s).", "ok")
+        if errors:
+            flash("Some failed - " + " | ".join(errors[:3]), "bad")
+        if not ok_count and not errors:
+            flash("No guests to email.", "bad")
+    except Exception as exc:  # noqa: BLE001
+        flash(f"Send-all failed: {exc}", "bad")
     return redirect(url_for("home"))
 
 
