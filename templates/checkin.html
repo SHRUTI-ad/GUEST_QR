@@ -21,40 +21,28 @@
         {{ message }}
       </div>
     {% elif guest.lunch_claimed and guest.dinner_claimed %}
-      <div class="status-banner claimed">
-        Both meals done
-        {% if guest.claimed_at %} · lunch {{ guest.claimed_at }}{% endif %}
-        {% if guest.dinner_claimed_at %} · dinner {{ guest.dinner_claimed_at }}{% endif %}
-      </div>
+      <div class="status-banner claimed">Both meals done for this guest ID.</div>
     {% elif guest.lunch_claimed %}
-      <div class="status-banner arrived">Lunch claimed — dinner still available on this same QR.</div>
+      <div class="status-banner arrived">Lunch claimed — dinner still available on same QR.</div>
     {% elif guest.dinner_claimed %}
-      <div class="status-banner arrived">Dinner claimed — lunch still available on this same QR.</div>
-    {% elif guest.arrived %}
-      <div class="status-banner arrived">Guest arrived — mark lunch or dinner below.</div>
+      <div class="status-banner arrived">Dinner claimed — lunch still available on same QR.</div>
     {% else %}
-      <div class="status-banner ok">Valid guest — mark arrival, lunch, or dinner.</div>
+      <div class="status-banner ok">Valid guest ID — mark lunch and/or dinner.</div>
     {% endif %}
 
     <div class="panel">
       <h1 style="font-size: 1.8rem; margin-bottom: 0.5rem;">{{ guest.name }}</h1>
       <dl class="meta">
-        <dt>Email</dt>
-        <dd>{{ guest.email }}</dd>
-        <dt>Phone</dt>
-        <dd>{{ guest.phone }}</dd>
-        <dt>Preference</dt>
-        <dd>{{ guest.meal }}</dd>
-        <dt>Table</dt>
-        <dd>{{ guest.table_no }}</dd>
-        <dt>Arrived</dt>
-        <dd>
-          {% if guest.arrived %}
-            Yes{% if guest.arrived_at %} · {{ guest.arrived_at }}{% endif %}
-          {% else %}
-            No
-          {% endif %}
-        </dd>
+        <dt>Guest ID</dt>
+        <dd>{{ guest.token[:8]|upper }}</dd>
+        <dt>Specialty</dt>
+        <dd>{{ guest.specialty or '—' }}</dd>
+        <dt>City</dt>
+        <dd>{{ guest.city or '—' }}</dd>
+        <dt>Designation</dt>
+        <dd>{{ guest.designation or 'Delegate' }}</dd>
+        <dt>Food preference</dt>
+        <dd>{{ guest.meal or '—' }}</dd>
         <dt>Lunch</dt>
         <dd>
           {% if guest.lunch_claimed %}
@@ -74,12 +62,6 @@
       </dl>
 
       <div class="actions checkin-actions" style="margin-top: 1.25rem;">
-        {% if not guest.arrived %}
-          <form method="post" style="flex: 1 1 100%;">
-            <input type="hidden" name="action" value="arrive" />
-            <button class="btn secondary btn-block" type="submit">Mark guest arrived</button>
-          </form>
-        {% endif %}
         {% if not guest.lunch_claimed %}
           <form method="post" style="flex: 1 1 100%;">
             <input type="hidden" name="action" value="lunch" />

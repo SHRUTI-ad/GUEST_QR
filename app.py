@@ -29,7 +29,6 @@ from flask import (
     session,
     url_for,
 )
-from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
@@ -69,17 +68,97 @@ SAMPLE_GUESTS = [
         "name": "Shruti Anandas",
         "email": "shrutianandas123@gmail.com",
         "phone": "9326305627",
+        "specialty": "General Medicine",
+        "city": "Ahmedabad",
+        "designation": "Delegate",
         "meal": "Vegetarian",
-        "table_no": "T1",
     },
     {
         "name": "Vishal Patel",
-        "email": "vickypatel123@gmail.com",
+        "email": "vickyashokpatel123@gmail.com",
         "phone": "8866325109",
+        "specialty": "Critical Care Medicine",
+        "city": "Mehsana",
+        "designation": "Delegate",
         "meal": "Non-Vegetarian",
-        "table_no": "T2",
+    },
+    {
+        "name": "Aarav Sharma",
+        "email": "aarav.sharma.test@example.com",
+        "phone": "9876543210",
+        "specialty": "Cardiology",
+        "city": "Surat",
+        "designation": "Delegate",
+        "meal": "Vegetarian",
+    },
+    {
+        "name": "Priya Patel",
+        "email": "priya.patel.test@example.com",
+        "phone": "9123456789",
+        "specialty": "Pediatrics",
+        "city": "Vadodara",
+        "designation": "Delegate",
+        "meal": "Non-Vegetarian",
+    },
+    {
+        "name": "Rohan Mehta",
+        "email": "rohan.mehta.test@example.com",
+        "phone": "9988776655",
+        "specialty": "Orthopedics",
+        "city": "Rajkot",
+        "designation": "Faculty",
+        "meal": "Vegan",
+    },
+    {
+        "name": "Sneha Iyer",
+        "email": "sneha.iyer.test@example.com",
+        "phone": "9001122334",
+        "specialty": "Dermatology",
+        "city": "Ahmedabad",
+        "designation": "Delegate",
+        "meal": "Vegetarian",
+    },
+    {
+        "name": "Vikram Singh",
+        "email": "vikram.singh.test@example.com",
+        "phone": "9555512121",
+        "specialty": "Neurology",
+        "city": "Gandhinagar",
+        "designation": "Delegate",
+        "meal": "Non-Vegetarian",
+    },
+    {
+        "name": "Ananya Gupta",
+        "email": "ananya.gupta.test@example.com",
+        "phone": "9811122233",
+        "specialty": "Gynecology",
+        "city": "Bhavnagar",
+        "designation": "Reception Committee Member",
+        "meal": "Vegetarian",
+    },
+    {
+        "name": "Karan Desai",
+        "email": "karan.desai.test@example.com",
+        "phone": "9822233344",
+        "specialty": "Radiology",
+        "city": "Jamnagar",
+        "designation": "Delegate",
+        "meal": "Non-Vegetarian",
+    },
+    {
+        "name": "Meera Nair",
+        "email": "meera.nair.test@example.com",
+        "phone": "9833344455",
+        "specialty": "Anesthesiology",
+        "city": "Anand",
+        "designation": "Delegate",
+        "meal": "Vegan",
     },
 ]
+
+SAMPLE_XLSX = BASE_DIR / "guests_badge_sample.xlsx"
+if not SAMPLE_XLSX.exists():
+    SAMPLE_XLSX = BASE_DIR / "guests_sample.xlsx"
 
 
 def get_db() -> sqlite3.Connection:
@@ -121,6 +200,11 @@ def init_db() -> None:
     _ensure_column(conn, "guests", "pdf_sent_at", "TEXT")
     _ensure_column(conn, "guests", "dinner_claimed", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "guests", "dinner_claimed_at", "TEXT")
+    _ensure_column(conn, "guests", "email_acked", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "guests", "email_acked_at", "TEXT")
+    _ensure_column(conn, "guests", "specialty", "TEXT DEFAULT ''")
+    _ensure_column(conn, "guests", "city", "TEXT DEFAULT ''")
+    _ensure_column(conn, "guests", "designation", "TEXT DEFAULT ''")
 
     count = conn.execute("SELECT COUNT(*) AS c FROM guests").fetchone()["c"]
     if count == 0:
@@ -129,33 +213,118 @@ def init_db() -> None:
     conn.close()
 
 
+def _guest_insert_values(guest: dict) -> tuple:
+    return (
+        guest["name"],
+        guest["email"],
+        guest.get("phone") or "",
+        guest.get("meal") or "Vegetarian",
+        guest.get("table_no") or "",
+        guest.get("specialty") or "",
+        guest.get("city") or "",
+        guest.get("designation") or "Delegate",
+        uuid.uuid4().hex,
+    )
+
+
 def _insert_sample_guests(conn: sqlite3.Connection) -> None:
     for guest in SAMPLE_GUESTS:
         conn.execute(
             """
-            INSERT INTO guests (name, email, phone, meal, table_no, token)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO guests
+            (name, email, phone, meal, table_no, specialty, city, designation, token)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (
-                guest["name"],
-                guest["email"],
-                guest["phone"],
-                guest["meal"],
-                guest["table_no"],
-                uuid.uuid4().hex,
-            ),
+            _guest_insert_values(guest),
         )
 
 
-def reset_guests_to_sample() -> int:
-    """Clear guest list and load SAMPLE_GUESTS (for test data updates)."""
+def replace_guests_from_rows(rows: list[dict]) -> int:
     conn = get_db()
     conn.execute("DELETE FROM guests")
-    _insert_sample_guests(conn)
+    for guest in rows:
+        conn.execute(
+            """
+            INSERT INTO guests
+            (name, email, phone, meal, table_no, specialty, city, designation, token)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            _guest_insert_values(guest),
+        )
     conn.commit()
     count = conn.execute("SELECT COUNT(*) AS c FROM guests").fetchone()["c"]
     conn.close()
     return count
+
+
+def read_guests_from_excel(file_storage) -> list[dict]:
+    from openpyxl import load_workbook
+
+    wb = load_workbook(file_storage, read_only=True, data_only=True)
+    ws = wb.active
+    rows_iter = ws.iter_rows(values_only=True)
+    header = next(rows_iter, None)
+    if not header:
+        raise RuntimeError("Excel file is empty.")
+
+    normalized = [str(h or "").strip().lower() for h in header]
+    aliases = {
+        "name": {"name", "guest", "guest name"},
+        "email": {"email", "email id", "mail"},
+        "phone": {"phone", "mobile", "contact", "phone number"},
+        "specialty": {"specialty", "speciality", "field", "department"},
+        "city": {"city", "place", "location"},
+        "designation": {"designation", "role", "category", "type"},
+        "meal": {"meal", "meal preference", "preference", "food"},
+    }
+
+    def find_col(keys: set[str]) -> int | None:
+        for i, name in enumerate(normalized):
+            if name in keys:
+                return i
+        return None
+
+    idx = {key: find_col(vals) for key, vals in aliases.items()}
+    if idx["name"] is None or idx["email"] is None:
+        raise RuntimeError(
+            "Excel must have Name and Email columns "
+            "(optional: Phone, Specialty, City, Designation, Meal)."
+        )
+
+    def cell(row, key: str, default: str = "") -> str:
+        i = idx[key]
+        if i is None:
+            return default
+        return str(row[i] or "").strip() or default
+
+    guests: list[dict] = []
+    for row in rows_iter:
+        if not row:
+            continue
+        name = cell(row, "name")
+        email = cell(row, "email")
+        if not name and not email:
+            continue
+        if not name or not email or "@" not in email:
+            continue
+        guests.append(
+            {
+                "name": name,
+                "email": email,
+                "phone": cell(row, "phone"),
+                "specialty": cell(row, "specialty"),
+                "city": cell(row, "city"),
+                "designation": cell(row, "designation", "Delegate"),
+                "meal": cell(row, "meal", "Vegetarian"),
+                "table_no": "",
+            }
+        )
+    wb.close()
+    if not guests:
+        raise RuntimeError("No valid guest rows found in Excel.")
+    if len(guests) > 2000:
+        raise RuntimeError("Too many rows (max 2000). Split the file.")
+    return guests
 
 
 def login_required(view):
@@ -186,75 +355,115 @@ def get_guest_by_id(guest_id: int) -> sqlite3.Row | None:
     return guest
 
 
-def qr_target_url(token: str) -> str:
-    """URL encoded in QR — for staff phones after login, not for guests to type."""
-    path = url_for("checkin", token=token)
+def public_url(endpoint: str, **values) -> str:
+    path = url_for(endpoint, **values)
     if PUBLIC_BASE_URL:
         return f"{PUBLIC_BASE_URL}{path}"
     return request.url_root.rstrip("/") + path
 
 
+def guest_qr_url(token: str) -> str:
+    """One QR / one guest ID — used for both lunch and dinner check-in."""
+    return public_url("checkin", token=token)
+
+
 def make_qr_image(data: str):
-    qr = qrcode.QRCode(version=1, box_size=10, border=2)
+    qr = qrcode.QRCode(version=1, box_size=8, border=2)
     qr.add_data(data)
     qr.make(fit=True)
     return qr.make_image(fill_color="black", back_color="white")
 
 
-def build_ticket_pdf(guest: sqlite3.Row, qr_url: str) -> io.BytesIO:
-    buffer = io.BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4
+def _guest_field(guest: sqlite3.Row, key: str, default: str = "") -> str:
+    try:
+        value = guest[key]
+    except (KeyError, IndexError):
+        return default
+    return (str(value).strip() if value is not None else "") or default
 
-    pdf.setFillColorRGB(0.08, 0.18, 0.28)
-    pdf.rect(0, height - 45 * mm, width, 45 * mm, fill=1, stroke=0)
+
+def build_ticket_pdf(guest: sqlite3.Row) -> io.BytesIO:
+    """Badge-style PDF: name, specialty, city, designation + one shared QR."""
+    badge_w, badge_h = 105 * mm, 160 * mm
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=(badge_w, badge_h))
+
+    purple = (0.36, 0.18, 0.56)
+    purple_dark = (0.25, 0.10, 0.42)
+    ink = (0.12, 0.10, 0.16)
+
+    # Background
+    pdf.setFillColorRGB(1, 1, 1)
+    pdf.rect(0, 0, badge_w, badge_h, fill=1, stroke=0)
+
+    # Header band
+    pdf.setFillColorRGB(*purple)
+    pdf.rect(0, badge_h - 38 * mm, badge_w, 38 * mm, fill=1, stroke=0)
 
     pdf.setFillColorRGB(1, 1, 1)
-    pdf.setFont("Helvetica-Bold", 22)
-    pdf.drawString(20 * mm, height - 22 * mm, EVENT_NAME)
-    pdf.setFont("Helvetica", 11)
-    pdf.drawString(20 * mm, height - 30 * mm, "Entry & Lunch Pass")
+    pdf.setFont("Helvetica-Bold", 11)
+    pdf.drawCentredString(badge_w / 2, badge_h - 14 * mm, EVENT_NAME)
+    pdf.setFont("Helvetica", 7.5)
+    pdf.drawCentredString(badge_w / 2, badge_h - 21 * mm, EVENT_VENUE)
+    pdf.drawCentredString(badge_w / 2, badge_h - 28 * mm, EVENT_DATE)
 
-    pdf.setFillColorRGB(0.1, 0.1, 0.1)
-    pdf.setFont("Helvetica-Bold", 18)
-    pdf.drawString(20 * mm, height - 65 * mm, guest["name"])
+    # Guest details (no table number)
+    name = _guest_field(guest, "name").upper()
+    specialty = _guest_field(guest, "specialty").upper()
+    city = _guest_field(guest, "city").upper()
+    designation = _guest_field(guest, "designation", "DELEGATE").upper()
+    code = (_guest_field(guest, "token")[:8] or "GUEST").upper()
 
-    lines = [
-        f"Meal: {guest['meal']}",
-        f"Table: {guest['table_no']}",
-        f"Event: {EVENT_DATE}",
-        f"Venue: {EVENT_VENUE}",
-    ]
-    y = height - 80 * mm
-    pdf.setFont("Helvetica", 12)
-    for line in lines:
-        pdf.drawString(20 * mm, y, line)
-        y -= 8 * mm
+    pdf.setFillColorRGB(*ink)
+    pdf.setFont("Helvetica-Bold", 14)
+    # Wrap long names
+    max_chars = 22
+    if len(name) <= max_chars:
+        pdf.drawCentredString(badge_w / 2, badge_h - 52 * mm, name)
+        detail_y = badge_h - 62 * mm
+    else:
+        pdf.drawCentredString(badge_w / 2, badge_h - 50 * mm, name[:max_chars])
+        pdf.drawCentredString(badge_w / 2, badge_h - 57 * mm, name[max_chars: max_chars * 2])
+        detail_y = badge_h - 67 * mm
 
-    qr_img = make_qr_image(qr_url)
+    pdf.setFont("Helvetica", 9)
+    if specialty:
+        pdf.drawCentredString(badge_w / 2, detail_y, specialty)
+        detail_y -= 6 * mm
+    if city:
+        pdf.drawCentredString(badge_w / 2, detail_y, city)
+        detail_y -= 7 * mm
+
+    # One shared guest ID + QR (works for lunch and dinner)
+    pdf.setFillColorRGB(*purple)
+    pdf.setFont("Helvetica-Bold", 9)
+    pdf.drawCentredString(badge_w / 2, detail_y, code)
+
+    qr_size = 42 * mm
+    qr_y = 28 * mm
+    qr_x = (badge_w - qr_size) / 2
+    qr_img = make_qr_image(guest_qr_url(guest["token"]))
     qr_buffer = io.BytesIO()
     qr_img.save(qr_buffer, format="PNG")
     qr_buffer.seek(0)
-
     pdf.drawImage(
         ImageReader(qr_buffer),
-        (width - 55 * mm) / 2,
-        55 * mm,
-        width=55 * mm,
-        height=55 * mm,
+        qr_x,
+        qr_y,
+        width=qr_size,
+        height=qr_size,
         mask="auto",
     )
+    pdf.setFillColorRGB(*purple_dark)
+    pdf.setFont("Helvetica", 7)
+    pdf.drawCentredString(badge_w / 2, qr_y - 5 * mm, "Scan for lunch & dinner")
 
-    pdf.setFont("Helvetica-Bold", 11)
-    pdf.setFillColorRGB(0.15, 0.15, 0.15)
-    pdf.drawCentredString(width / 2, 42 * mm, "Show this QR at lunch and dinner")
-    pdf.setFont("Helvetica", 9)
-    pdf.setFillColorRGB(0.4, 0.4, 0.4)
-    pdf.drawCentredString(
-        width / 2,
-        34 * mm,
-        "One personal QR — valid for 1 lunch + 1 dinner. Do not share.",
-    )
+    # Footer band with designation
+    pdf.setFillColorRGB(*purple_dark)
+    pdf.rect(0, 0, badge_w, 16 * mm, fill=1, stroke=0)
+    pdf.setFillColorRGB(1, 1, 1)
+    pdf.setFont("Helvetica-Bold", 8)
+    pdf.drawCentredString(badge_w / 2, 6 * mm, designation[:40])
 
     pdf.showPage()
     pdf.save()
@@ -309,15 +518,41 @@ def email_is_configured() -> bool:
         return False
 
 
-def _email_body(guest: sqlite3.Row) -> str:
+def _ack_url(guest: sqlite3.Row) -> str:
+    return public_url("acknowledge", token=guest["token"])
+
+
+def _email_body_text(guest: sqlite3.Row) -> str:
+    ack = _ack_url(guest)
     return (
         f"Hi {guest['name']},\n\n"
-        f"Please find your QR pass attached for {EVENT_NAME}.\n"
+        f"Please find your badge PDF attached for {EVENT_NAME}.\n"
         f"{EVENT_DATE}\n{EVENT_VENUE}\n\n"
-        "Show the same QR at lunch and again at dinner.\n"
-        "You do not need to open any link.\n\n"
+        "Your badge has one QR (guest ID). "
+        "Show the same QR at lunch and dinner counters.\n\n"
+        "Please confirm you received this pass by opening this link:\n"
+        f"{ack}\n\n"
         "See you there!\n"
     )
+
+
+def _email_body_html(guest: sqlite3.Row) -> str:
+    ack = _ack_url(guest)
+    return f"""
+    <p>Hi {guest['name']},</p>
+    <p>Please find your badge PDF attached for <strong>{EVENT_NAME}</strong>.</p>
+    <p>{EVENT_DATE}<br/>{EVENT_VENUE}</p>
+    <p>Your badge has <strong>one QR</strong> (guest ID).
+       Show the same QR at lunch and dinner counters.</p>
+    <p>
+      <a href="{ack}"
+         style="display:inline-block;background:#5b2d8e;color:#fff;padding:12px 18px;
+                border-radius:8px;text-decoration:none;font-weight:600;">
+        I received my QR pass
+      </a>
+    </p>
+    <p style="color:#666;font-size:13px;">If the button does not work, open:<br/>{ack}</p>
+    """
 
 
 def _send_via_resend(cfg: dict, guest: sqlite3.Row, pdf_bytes: bytes, filename: str) -> None:
@@ -325,7 +560,8 @@ def _send_via_resend(cfg: dict, guest: sqlite3.Row, pdf_bytes: bytes, filename: 
         "from": f"{cfg['from_name']} <{cfg['from_email']}>",
         "to": [guest["email"]],
         "subject": f"Your QR pass - {EVENT_NAME}",
-        "text": _email_body(guest),
+        "text": _email_body_text(guest),
+        "html": _email_body_html(guest),
         "attachments": [
             {
                 "filename": filename,
@@ -358,7 +594,8 @@ def _send_via_smtp(cfg: dict, guest: sqlite3.Row, pdf_bytes: bytes, filename: st
     msg["Subject"] = f"Your QR pass - {EVENT_NAME}"
     msg["From"] = f"{cfg.get('from_name', 'Event Desk')} <{cfg['from_email']}>"
     msg["To"] = guest["email"]
-    msg.set_content(_email_body(guest))
+    msg.set_content(_email_body_text(guest))
+    msg.add_alternative(_email_body_html(guest), subtype="html")
     msg.add_attachment(
         pdf_bytes,
         maintype="application",
@@ -464,13 +701,35 @@ def logout():
 @app.route("/")
 @login_required
 def home():
+    q = (request.args.get("q") or "").strip()
     conn = get_db()
-    guests = conn.execute("SELECT * FROM guests ORDER BY id").fetchall()
-    arrived = sum(1 for g in guests if g["arrived"])
-    lunch_claimed = sum(1 for g in guests if g["lunch_claimed"])
-    dinner_claimed = sum(1 for g in guests if g["dinner_claimed"])
-    sent = sum(1 for g in guests if g["pdf_sent"])
+    all_guests = conn.execute("SELECT * FROM guests ORDER BY id").fetchall()
+    arrived = sum(1 for g in all_guests if g["arrived"])
+    lunch_claimed = sum(1 for g in all_guests if g["lunch_claimed"])
+    dinner_claimed = sum(1 for g in all_guests if g["dinner_claimed"])
+    sent = sum(1 for g in all_guests if g["pdf_sent"])
+    acked = sum(1 for g in all_guests if g["email_acked"])
+
+    if q:
+        like = f"%{q.lower()}%"
+        guests = conn.execute(
+            """
+            SELECT * FROM guests
+            WHERE lower(name) LIKE ?
+               OR lower(email) LIKE ?
+               OR lower(phone) LIKE ?
+               OR lower(COALESCE(specialty, '')) LIKE ?
+               OR lower(COALESCE(city, '')) LIKE ?
+               OR lower(COALESCE(designation, '')) LIKE ?
+               OR lower(meal) LIKE ?
+            ORDER BY name
+            """,
+            (like, like, like, like, like, like, like),
+        ).fetchall()
+    else:
+        guests = all_guests
     conn.close()
+
     return render_template(
         "home.html",
         guests=guests,
@@ -478,16 +737,68 @@ def home():
         lunch_claimed=lunch_claimed,
         dinner_claimed=dinner_claimed,
         sent=sent,
-        total=len(guests),
+        acked=acked,
+        total=len(all_guests),
+        shown=len(guests),
+        q=q,
     )
 
 
-@app.route("/reset-guests", methods=["POST"])
+@app.route("/upload-excel", methods=["POST"])
 @login_required
-def reset_guests():
-    count = reset_guests_to_sample()
-    flash(f"Guest list reset — loaded {count} test guest(s).", "ok")
+def upload_excel():
+    file = request.files.get("excel_file")
+    if not file or not file.filename:
+        flash("Please choose an Excel (.xlsx) file.", "bad")
+        return redirect(url_for("home"))
+    if not file.filename.lower().endswith(".xlsx"):
+        flash("Only .xlsx files are supported.", "bad")
+        return redirect(url_for("home"))
+    try:
+        rows = read_guests_from_excel(file)
+        count = replace_guests_from_rows(rows)
+        flash(f"Loaded {count} guest(s) from Excel.", "ok")
+    except Exception as exc:  # noqa: BLE001
+        flash(f"Excel upload failed: {exc}", "bad")
     return redirect(url_for("home"))
+
+
+@app.route("/sample-excel")
+@login_required
+def sample_excel():
+    if SAMPLE_XLSX.exists():
+        return send_file(
+            SAMPLE_XLSX,
+            as_attachment=True,
+            download_name="guests_sample.xlsx",
+        )
+    flash("Sample Excel file is missing on the server.", "bad")
+    return redirect(url_for("home"))
+
+
+@app.route("/ack/<token>")
+def acknowledge(token: str):
+    """Guest clicks from email — no staff login required."""
+    guest = get_guest_by_token(token)
+    if guest is None:
+        return render_template("ack.html", guest=None, already=False), 404
+
+    already = bool(guest["email_acked"])
+    if not already:
+        conn = get_db()
+        conn.execute(
+            """
+            UPDATE guests
+            SET email_acked = 1, email_acked_at = ?
+            WHERE token = ?
+            """,
+            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), token),
+        )
+        conn.commit()
+        conn.close()
+        guest = get_guest_by_token(token)
+
+    return render_template("ack.html", guest=guest, already=already)
 
 
 @app.route("/pdf/<token>")
@@ -496,7 +807,7 @@ def pdf_ticket(token: str):
     guest = get_guest_by_token(token)
     if guest is None:
         abort(404)
-    pdf_buffer = build_ticket_pdf(guest, qr_target_url(token))
+    pdf_buffer = build_ticket_pdf(guest)
     filename = f"{guest['name'].replace(' ', '_')}_pass.pdf"
     return send_file(
         pdf_buffer,
@@ -514,7 +825,7 @@ def send_one(guest_id: int):
         if guest is None:
             flash("Guest not found.", "bad")
             return redirect(url_for("home"))
-        pdf_buffer = build_ticket_pdf(guest, qr_target_url(guest["token"]))
+        pdf_buffer = build_ticket_pdf(guest)
         send_pdf_email(guest, pdf_buffer)
         mark_pdf_sent(guest_id)
         flash(f"QR PDF sent to {guest['name']} ({guest['email']}).", "ok")
@@ -535,7 +846,7 @@ def send_all():
         errors = []
         for guest in guests:
             try:
-                pdf_buffer = build_ticket_pdf(guest, qr_target_url(guest["token"]))
+                pdf_buffer = build_ticket_pdf(guest)
                 send_pdf_email(guest, pdf_buffer)
                 mark_pdf_sent(guest["id"])
                 ok_count += 1
@@ -565,8 +876,17 @@ def _mark_arrived_if_needed(conn: sqlite3.Connection, guest: sqlite3.Row, token:
 @login_required
 def checkin(token: str):
     guest = get_guest_by_token(token)
+    focus_meal = (request.args.get("meal") or request.form.get("meal") or "").lower()
+    if focus_meal not in {"lunch", "dinner"}:
+        focus_meal = ""
+
     if guest is None:
-        return render_template("checkin.html", guest=None, status="invalid"), 404
+        return (
+            render_template(
+                "checkin.html", guest=None, status="invalid", focus_meal=focus_meal
+            ),
+            404,
+        )
 
     message = None
     if request.method == "POST":
@@ -626,6 +946,7 @@ def checkin(token: str):
         guest=guest,
         status=status,
         message=message,
+        focus_meal=focus_meal,
     )
 
 

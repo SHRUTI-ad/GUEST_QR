@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Pass received · {{ event_name }}{% endblock %}
+{% block content %}
+  <div class="topbar">
+    <div>
+      <p class="brand">Guest confirmation</p>
+      <h1>{{ event_name }}</h1>
+    </div>
+  </div>
+
+  {% if not guest %}
+    <div class="status-banner invalid">This confirmation link is invalid.</div>
+  {% else %}
+    {% if already %}
+      <div class="status-banner arrived">You already confirmed earlier{% if guest.email_acked_at %} ({{ guest.email_acked_at }}){% endif %}.</div>
+    {% else %}
+      <div class="status-banner ok">Thank you! We recorded that you received your QR pass.</div>
+    {% endif %}
+    <div class="panel">
+      <h1 style="font-size: 1.5rem;">{{ guest.name }}</h1>
+      <p class="help">Keep the attached badge PDF. Show the same QR at lunch and dinner.</p>
+    </div>
+  {% endif %}
+{% endblock %}
