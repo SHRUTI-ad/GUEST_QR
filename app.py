@@ -64,39 +64,18 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 
 SAMPLE_GUESTS = [
     {
-        "name": "Aarav Sharma",
-        "email": "aarav.sharma@example.com",
-        "phone": "+91 98765 43210",
+        "name": "Shruti Anandas",
+        "email": "shrutianandas123@gmail.com",
+        "phone": "9326305627",
         "meal": "Vegetarian",
         "table_no": "T1",
     },
     {
-        "name": "Priya Patel",
-        "email": "priya.patel@example.com",
-        "phone": "+91 91234 56789",
+        "name": "Vishal Patel",
+        "email": "vickyashokpatel123@gmail.com",
+        "phone": "8866325109",
         "meal": "Non-Vegetarian",
-        "table_no": "T1",
-    },
-    {
-        "name": "Rohan Mehta",
-        "email": "rohan.mehta@example.com",
-        "phone": "+91 99887 76655",
-        "meal": "Vegan",
         "table_no": "T2",
-    },
-    {
-        "name": "Sneha Iyer",
-        "email": "sneha.iyer@example.com",
-        "phone": "+91 90011 22334",
-        "meal": "Vegetarian",
-        "table_no": "T2",
-    },
-    {
-        "name": "Vikram Singh",
-        "email": "vikram.singh@example.com",
-        "phone": "+91 95555 12121",
-        "meal": "Non-Vegetarian",
-        "table_no": "T3",
     },
 ]
 
@@ -141,23 +120,38 @@ def init_db() -> None:
 
     count = conn.execute("SELECT COUNT(*) AS c FROM guests").fetchone()["c"]
     if count == 0:
-        for guest in SAMPLE_GUESTS:
-            conn.execute(
-                """
-                INSERT INTO guests (name, email, phone, meal, table_no, token)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    guest["name"],
-                    guest["email"],
-                    guest["phone"],
-                    guest["meal"],
-                    guest["table_no"],
-                    uuid.uuid4().hex,
-                ),
-            )
+        _insert_sample_guests(conn)
     conn.commit()
     conn.close()
+
+
+def _insert_sample_guests(conn: sqlite3.Connection) -> None:
+    for guest in SAMPLE_GUESTS:
+        conn.execute(
+            """
+            INSERT INTO guests (name, email, phone, meal, table_no, token)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                guest["name"],
+                guest["email"],
+                guest["phone"],
+                guest["meal"],
+                guest["table_no"],
+                uuid.uuid4().hex,
+            ),
+        )
+
+
+def reset_guests_to_sample() -> int:
+    """Clear guest list and load SAMPLE_GUESTS (for test data updates)."""
+    conn = get_db()
+    conn.execute("DELETE FROM guests")
+    _insert_sample_guests(conn)
+    conn.commit()
+    count = conn.execute("SELECT COUNT(*) AS c FROM guests").fetchone()["c"]
+    conn.close()
+    return count
 
 
 def login_required(view):
@@ -265,18 +259,35 @@ def build_ticket_pdf(guest: sqlite3.Row, qr_url: str) -> io.BytesIO:
 
 
 def load_email_config() -> dict | None:
-    if not EMAIL_CONFIG_PATH.exists():
-        return None
-    with EMAIL_CONFIG_PATH.open(encoding="utf-8") as f:
-        return json.load(f)
+    """Prefer env vars (Render), fall back to local email_config.json."""
+    env_user = os.environ.get("SMTP_USER", "").strip()
+    env_pass = os.environ.get("SMTP_PASSWORD", "").strip()
+    if env_user and env_pass:
+        return {
+            "smtp_host": os.environ.get("SMTP_HOST", "smtp.gmail.com"),
+            "smtp_port": int(os.environ.get("SMTP_PORT", "587")),
+            "smtp_user": env_user,
+            "smtp_password": env_pass,
+            "from_email": os.environ.get("SMTP_FROM_EMAIL", env_user),
+            "from_name": os.environ.get("SMTP_FROM_NAME", "Event Desk"),
+        }
+    if EMAIL_CONFIG_PATH.exists():
+        with EMAIL_CONFIG_PATH.open(encoding="utf-8") as f:
+            return json.load(f)
+    return None
+
+
+def email_is_configured() -> bool:
+    return load_email_config() is not None
 
 
 def send_pdf_email(guest: sqlite3.Row, pdf_buffer: io.BytesIO) -> None:
     cfg = load_email_config()
     if not cfg:
         raise RuntimeError(
-            "Email not configured. Copy email_config.example.json to "
-            "email_config.json and add your SMTP details."
+            "Email not configured. On Render set SMTP_USER + SMTP_PASSWORD "
+            "(Gmail App Password). Locally copy email_config.example.json to "
+            "email_config.json."
         )
 
     msg = MIMEMultipart()
@@ -320,7 +331,7 @@ def inject_event():
         "event_name": EVENT_NAME,
         "event_date": EVENT_DATE,
         "event_venue": EVENT_VENUE,
-        "email_ready": EMAIL_CONFIG_PATH.exists(),
+        "email_ready": email_is_configured(),
         "staff_logged_in": bool(session.get("staff")),
     }
 
@@ -368,6 +379,14 @@ def home():
         sent=sent,
         total=len(guests),
     )
+
+
+@app.route("/reset-guests", methods=["POST"])
+@login_required
+def reset_guests():
+    count = reset_guests_to_sample()
+    flash(f"Guest list reset — loaded {count} test guest(s).", "ok")
+    return redirect(url_for("home"))
 
 
 @app.route("/pdf/<token>")
