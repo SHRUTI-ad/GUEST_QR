@@ -69,7 +69,7 @@
         <input type="file" name="excel_file" id="excel-file-input" accept=".xlsx" hidden />
         <button type="button" class="btn btn-sm" id="excel-import-btn">Import Excel</button>
       </form>
-      <p class="help" style="margin-top: 0.45rem;">Admin only — uploading replaces the current guest list.</p>
+      <p class="help" style="margin-top: 0.45rem;">Admin only — same name + phone keeps the same QR/ID. Email optional.</p>
     </div>
   {% endif %}
 
@@ -137,7 +137,10 @@
         if (!input.files || !input.files.length) return;
         const name = input.files[0].name;
         const ok = confirm(
-          "Import \"" + name + "\"?\n\nThis will REPLACE the current guest list with data from this Excel file."
+          "Import \"" + name + "\"?\n\n" +
+          "Same guest name + phone keeps the same QR code and ID (printed badges stay valid).\n" +
+          "New name/phone pairs get new QR/IDs. Guests missing from this file are removed.\n" +
+          "Email is optional."
         );
         if (ok) form.submit();
         else input.value = "";

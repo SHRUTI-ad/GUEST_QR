@@ -276,17 +276,37 @@ def init_db() -> None:
     conn.close()
 
 
-def _guest_insert_values(guest: dict) -> tuple:
+def _norm_email(email: str) -> str:
+    return (email or "").strip().lower()
+
+
+def _norm_name(name: str) -> str:
+    return " ".join((name or "").strip().lower().split())
+
+
+def _norm_phone(phone: str) -> str:
+    digits = re.sub(r"\D+", "", phone or "")
+    # Prefer last 10 digits (common for Indian mobiles with +91 / 0 prefix)
+    if len(digits) > 10:
+        return digits[-10:]
+    return digits
+
+
+def _guest_identity_key(name: str, phone: str) -> str:
+    return f"{_norm_name(name)}|{_norm_phone(phone)}"
+
+
+def _guest_insert_values(guest: dict, token: str | None = None) -> tuple:
     return (
         guest["name"],
-        guest["email"],
+        (guest.get("email") or "").strip(),
         guest.get("phone") or "",
         guest.get("meal") or "Vegetarian",
         guest.get("table_no") or "",
         guest.get("specialty") or "",
         guest.get("city") or "",
         normalize_category(guest.get("designation") or guest.get("category")),
-        uuid.uuid4().hex,
+        token or uuid.uuid4().hex,
     )
 
 
@@ -302,22 +322,91 @@ def _insert_sample_guests(conn: sqlite3.Connection) -> None:
         )
 
 
-def replace_guests_from_rows(rows: list[dict]) -> int:
+def sync_guests_from_rows(rows: list[dict]) -> dict:
+    """
+    Merge Excel into the DB without changing QR/token for returning guests.
+
+    Same name + phone = same person → keep token, short ID, and meal check-in flags.
+    New name/phone pair → new token. Guests missing from Excel are removed.
+    Email is optional and does not control identity.
+    """
     conn = get_db()
-    conn.execute("DELETE FROM guests")
+    existing = conn.execute("SELECT * FROM guests").fetchall()
+    by_identity = {
+        _guest_identity_key(row["name"], row["phone"]): row for row in existing
+    }
+
+    seen: set[str] = set()
+    kept = 0
+    created = 0
+
     for guest in rows:
-        conn.execute(
-            """
-            INSERT INTO guests
-            (name, email, phone, meal, table_no, specialty, city, designation, token)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            _guest_insert_values(guest),
-        )
+        if not _norm_name(guest["name"]) or not _norm_phone(guest.get("phone") or ""):
+            continue
+        key = _guest_identity_key(guest["name"], guest.get("phone") or "")
+        if key in seen:
+            continue
+        seen.add(key)
+
+        old = by_identity.get(key)
+        email_value = (guest.get("email") or "").strip()
+        if old:
+            # Keep existing email if Excel left it blank
+            if not email_value:
+                email_value = (old["email"] or "").strip()
+            conn.execute(
+                """
+                UPDATE guests
+                SET name = ?, email = ?, phone = ?, meal = ?, table_no = ?,
+                    specialty = ?, city = ?, designation = ?
+                WHERE id = ?
+                """,
+                (
+                    guest["name"].strip(),
+                    email_value,
+                    guest.get("phone") or "",
+                    guest.get("meal") or "Vegetarian",
+                    guest.get("table_no") or "",
+                    guest.get("specialty") or "",
+                    guest.get("city") or "",
+                    normalize_category(
+                        guest.get("designation") or guest.get("category")
+                    ),
+                    old["id"],
+                ),
+            )
+            kept += 1
+        else:
+            conn.execute(
+                """
+                INSERT INTO guests
+                (name, email, phone, meal, table_no, specialty, city, designation, token)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                _guest_insert_values(guest),
+            )
+            created += 1
+
+    removed = 0
+    for key, old in by_identity.items():
+        if key not in seen:
+            conn.execute("DELETE FROM guests WHERE id = ?", (old["id"],))
+            removed += 1
+
     conn.commit()
-    count = conn.execute("SELECT COUNT(*) AS c FROM guests").fetchone()["c"]
+    total = conn.execute("SELECT COUNT(*) AS c FROM guests").fetchone()["c"]
     conn.close()
-    return count
+    return {
+        "total": total,
+        "kept": kept,
+        "created": created,
+        "removed": removed,
+    }
+
+
+def replace_guests_from_rows(rows: list[dict]) -> int:
+    """Backward-compatible wrapper; prefer sync_guests_from_rows."""
+    return sync_guests_from_rows(rows)["total"]
 
 
 def read_guests_from_excel(file_storage) -> list[dict]:
@@ -332,9 +421,11 @@ def read_guests_from_excel(file_storage) -> list[dict]:
 
     normalized = [str(h or "").strip().lower() for h in header]
     aliases = {
-        "name": {"name", "guest", "guest name"},
+        "name": {"name", "guest", "guest name", "full name"},
+        "first_name": {"first name", "firstname", "first"},
+        "last_name": {"last name", "lastname", "last", "surname"},
         "email": {"email", "email id", "mail"},
-        "phone": {"phone", "mobile", "contact", "phone number"},
+        "phone": {"phone", "mobile", "contact", "phone number", "mobile number"},
         "specialty": {"specialty", "speciality", "field", "department"},
         "city": {"city", "place", "location"},
         "designation": {
@@ -355,10 +446,12 @@ def read_guests_from_excel(file_storage) -> list[dict]:
         return None
 
     idx = {key: find_col(vals) for key, vals in aliases.items()}
-    if idx["name"] is None or idx["email"] is None:
+    has_full_name = idx["name"] is not None
+    has_split_name = idx["first_name"] is not None or idx["last_name"] is not None
+    if idx["phone"] is None or (not has_full_name and not has_split_name):
         raise RuntimeError(
-            "Excel must have Name and Email columns "
-            "(optional: Phone, Specialty, City, Designation, Meal)."
+            "Excel must have Name (or First Name + Last Name) and Phone columns. "
+            "Email is optional (needed only if you email the PDF)."
         )
 
     def cell(row, key: str, default: str = "") -> str:
@@ -372,16 +465,25 @@ def read_guests_from_excel(file_storage) -> list[dict]:
         if not row:
             continue
         name = cell(row, "name")
+        if not name:
+            name = " ".join(
+                part
+                for part in (cell(row, "first_name"), cell(row, "last_name"))
+                if part
+            ).strip()
+        phone = cell(row, "phone")
         email = cell(row, "email")
-        if not name and not email:
+        if not name and not phone:
             continue
-        if not name or not email or "@" not in email:
+        if not name or not _norm_phone(phone):
             continue
+        if email and "@" not in email:
+            email = ""
         guests.append(
             {
                 "name": name,
                 "email": email,
-                "phone": cell(row, "phone"),
+                "phone": phone,
                 "specialty": cell(row, "specialty"),
                 "city": cell(row, "city"),
                 "designation": normalize_category(cell(row, "designation", "Delegate")),
@@ -391,7 +493,9 @@ def read_guests_from_excel(file_storage) -> list[dict]:
         )
     wb.close()
     if not guests:
-        raise RuntimeError("No valid guest rows found in Excel.")
+        raise RuntimeError(
+            "No valid guest rows found. Each row needs a name and phone number."
+        )
     if len(guests) > 2000:
         raise RuntimeError("Too many rows (max 2000). Split the file.")
     return guests
@@ -938,9 +1042,12 @@ def upload_excel():
         return redirect(url_for("home"))
     try:
         rows = read_guests_from_excel(file)
-        count = replace_guests_from_rows(rows)
+        stats = sync_guests_from_rows(rows)
         flash(
-            f"Imported {count} guest(s) from Excel. Previous list was replaced.",
+            f"Imported {stats['total']} guest(s): "
+            f"{stats['kept']} kept same QR/ID, "
+            f"{stats['created']} new, "
+            f"{stats['removed']} removed.",
             "ok",
         )
     except Exception as exc:  # noqa: BLE001
@@ -1010,6 +1117,12 @@ def send_one(guest_id: int):
         if guest is None:
             flash("Guest not found.", "bad")
             return redirect(url_for("home"))
+        if not guest["email"] or "@" not in guest["email"]:
+            flash(
+                f"{guest['name']} has no email — download PDF instead, or add email in Excel.",
+                "bad",
+            )
+            return redirect(url_for("home"))
         pdf_buffer = build_ticket_pdf(guest)
         send_pdf_email(guest, pdf_buffer)
         mark_pdf_sent(guest_id)
@@ -1031,6 +1144,9 @@ def send_all():
         errors = []
         for guest in guests:
             try:
+                if not guest["email"] or "@" not in guest["email"]:
+                    errors.append(f"{guest['name']}: no email")
+                    continue
                 pdf_buffer = build_ticket_pdf(guest)
                 send_pdf_email(guest, pdf_buffer)
                 mark_pdf_sent(guest["id"])
