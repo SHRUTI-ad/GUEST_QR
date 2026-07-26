@@ -55,7 +55,7 @@ STAFF_USERNAME = os.environ.get("STAFF_USERNAME", "staff")
 STAFF_PASSWORD = os.environ.get("STAFF_PASSWORD", "event123")
 STAFF_PASSWORD_HASH = generate_password_hash(STAFF_PASSWORD)
 
-EVENT_NAME = "Summer Lunch Meetup"
+EVENT_NAME = "Monsoon Conference Lunch Meetup"
 EVENT_DATE = "Saturday, 25 July 2026 · 12:30 PM"
 EVENT_VENUE = "Main Hall, City Convention Center"
 
@@ -865,7 +865,10 @@ def upload_excel():
     try:
         rows = read_guests_from_excel(file)
         count = replace_guests_from_rows(rows)
-        flash(f"Loaded {count} guest(s) from Excel.", "ok")
+        flash(
+            f"Imported {count} guest(s) from Excel. Previous list was replaced.",
+            "ok",
+        )
     except Exception as exc:  # noqa: BLE001
         flash(f"Excel upload failed: {exc}", "bad")
     return redirect(url_for("home"))

@@ -19,7 +19,6 @@
       </p>
     </div>
     <nav class="app-nav">
-      <a class="btn secondary" href="{{ url_for('scan') }}">Scan</a>
       <a class="btn ghost" href="{{ url_for('logout') }}">Log out</a>
     </nav>
   </header>
@@ -56,42 +55,29 @@
     {% endfor %}
   </div>
 
-  <div class="panel">
-    <h2 class="panel-title">Tools</h2>
-    <div class="toolbar-grid">
-      <form method="get" action="{{ url_for('home') }}" class="search-bar">
-        {% if category %}<input type="hidden" name="category" value="{{ category }}" />{% endif %}
-        <label class="field">
-          <span class="field-label">Search guests</span>
-          <input type="search" name="q" value="{{ q or '' }}" placeholder="Name, phone, email, city…" autocomplete="off" />
-        </label>
-        <button class="btn" type="submit">Search</button>
-        {% if q or category %}
-          <a class="btn secondary" href="{{ url_for('home') }}">Reset</a>
-        {% endif %}
+  {# Excel import only on All tab #}
+  {% if not category %}
+    <div class="panel tools-compact">
+      <form method="post" action="{{ url_for('upload_excel') }}" id="excel-upload-form" enctype="multipart/form-data">
+        <input type="file" name="excel_file" id="excel-file-input" accept=".xlsx" hidden />
+        <button type="button" class="btn btn-sm" id="excel-import-btn">Import Excel</button>
       </form>
-
-      <form method="post" action="{{ url_for('upload_excel') }}" enctype="multipart/form-data" class="form-row">
-        <label class="field">
-          <span class="field-label">Import Excel list</span>
-          <input type="file" name="excel_file" accept=".xlsx" required />
-        </label>
-        <div class="actions">
-          <button class="btn secondary" type="submit">Upload</button>
-          <a class="btn secondary" href="{{ url_for('sample_excel') }}">Sample Excel</a>
-        </div>
-      </form>
+      <p class="help" style="margin-top: 0.45rem;">Uploading replaces the current guest list.</p>
     </div>
-    {% if email_ready %}
-      <form method="post" action="{{ url_for('send_all') }}" style="margin-top: 0.85rem;">
-        <button class="btn btn-block" type="submit"
-          onclick="return confirm('Email QR PDFs to all {{ total }} guests?');">
-          Send QR PDF to all guests
-        </button>
-      </form>
-    {% else %}
-      <p class="help" style="margin-top: 0.85rem;">Email send is offline here — use PDF download or local Excel script.</p>
-    {% endif %}
+  {% endif %}
+
+  <div class="panel">
+    <form method="get" action="{{ url_for('home') }}" class="search-bar">
+      {% if category %}<input type="hidden" name="category" value="{{ category }}" />{% endif %}
+      <label class="field">
+        <span class="field-label">Search guests</span>
+        <input type="search" name="q" value="{{ q or '' }}" placeholder="Name, phone, email, city…" autocomplete="off" />
+      </label>
+      <button class="btn" type="submit">Search</button>
+      {% if q or category %}
+        <a class="btn secondary" href="{{ url_for('home') }}">Reset</a>
+      {% endif %}
+    </form>
   </div>
 
   <p class="section-label">
@@ -122,16 +108,39 @@
         </div>
         <div class="row-actions">
           <a class="btn secondary" href="{{ url_for('pdf_ticket', token=g.token) }}">PDF</a>
-          {% if email_ready %}
-            <form method="post" action="{{ url_for('send_one', guest_id=g.id) }}">
-              <button class="btn secondary" type="submit">Email</button>
-            </form>
-          {% endif %}
-          <a class="btn" href="{{ url_for('checkin', token=g.token) }}">Check-in</a>
+          <a class="btn checkin-btn {{ category_colors[cat].css }}" href="{{ url_for('checkin', token=g.token) }}">Check-in</a>
         </div>
       </article>
     {% else %}
-      <div class="panel empty-state">No guests found. Try another search or import Excel.</div>
+      <div class="panel empty-state">No guests found. Try another search or import Excel from All tab.</div>
     {% endfor %}
   </div>
+
+  {% if not category %}
+  <script>
+    (function () {
+      const form = document.getElementById("excel-upload-form");
+      const input = document.getElementById("excel-file-input");
+      const btn = document.getElementById("excel-import-btn");
+      if (!form || !input || !btn) return;
+
+      btn.addEventListener("click", function () {
+        input.click();
+      });
+
+      input.addEventListener("change", function () {
+        if (!input.files || !input.files.length) return;
+        const name = input.files[0].name;
+        const ok = confirm(
+          "Import \"" + name + "\"?\n\nThis will REPLACE the current guest list with data from this Excel file."
+        );
+        if (ok) {
+          form.submit();
+        } else {
+          input.value = "";
+        }
+      });
+    })();
+  </script>
+  {% endif %}
 {% endblock %}
