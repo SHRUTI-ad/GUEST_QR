@@ -1,24 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Pass received · {{ event_name }}{% endblock %}
+{% block body_class %}theme-all{% endblock %}
 {% block content %}
-  <div class="topbar">
-    <div>
-      <p class="brand">Guest confirmation</p>
-      <h1>{{ event_name }}</h1>
+  <div class="login-shell">
+    <div class="panel login-panel">
+      <p class="brand">Confirmation</p>
+      <h1 style="margin-bottom: 0.5rem;">{{ event_name }}</h1>
+
+      {% if not guest %}
+        <div class="status-banner invalid">This confirmation link is invalid.</div>
+      {% else %}
+        {% if already %}
+          <div class="status-banner arrived">Already confirmed{% if guest.email_acked_at %} · {{ guest.email_acked_at }}{% endif %}</div>
+        {% else %}
+          <div class="status-banner ok">Thanks — we recorded that you received your QR pass.</div>
+        {% endif %}
+        <h2 style="margin: 0.5rem 0 0; font-size: 1.2rem;">{{ guest.name }}</h2>
+        <p class="help" style="margin-top: 0.5rem;">Keep the badge PDF. Show the same QR at lunch and dinner.</p>
+      {% endif %}
     </div>
   </div>
-
-  {% if not guest %}
-    <div class="status-banner invalid">This confirmation link is invalid.</div>
-  {% else %}
-    {% if already %}
-      <div class="status-banner arrived">You already confirmed earlier{% if guest.email_acked_at %} ({{ guest.email_acked_at }}){% endif %}.</div>
-    {% else %}
-      <div class="status-banner ok">Thank you! We recorded that you received your QR pass.</div>
-    {% endif %}
-    <div class="panel">
-      <h1 style="font-size: 1.5rem;">{{ guest.name }}</h1>
-      <p class="help">Keep the attached badge PDF. Show the same QR at lunch and dinner.</p>
-    </div>
-  {% endif %}
 {% endblock %}

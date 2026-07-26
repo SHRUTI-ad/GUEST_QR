@@ -1,32 +1,31 @@
 {% extends "base.html" %}
 {% block title %}Staff login · {{ event_name }}{% endblock %}
+{% block body_class %}theme-all{% endblock %}
 {% block content %}
-  <div class="topbar">
-    <div>
+  <div class="login-shell">
+    <div class="panel login-panel">
       <p class="brand">Staff only</p>
-      <h1>{{ event_name }}</h1>
-      <p class="sub">Sign in to manage guests, send QR PDFs, and check in arrivals.</p>
-    </div>
-  </div>
+      <h1 style="margin-bottom: 0.35rem;">{{ event_name }}</h1>
+      <p class="help" style="margin-bottom: 1.1rem;">Sign in to manage guests and meal check-in.</p>
 
-  <div class="panel login-panel">
-    {% if error %}
-      <div class="status-banner invalid">{{ error }}</div>
-    {% endif %}
-    <form method="post" class="form-row">
-      <label class="field">
-        <span class="field-label">Username</span>
-        <input type="text" name="username" value="staff" autocomplete="username" required />
-      </label>
-      <label class="field">
-        <span class="field-label">Password</span>
-        <input type="password" name="password" autocomplete="current-password" required />
-      </label>
-      <button class="btn btn-block" type="submit">Sign in</button>
-    </form>
-    <p class="help" style="margin-top: 1rem;">
-      Default local login: <strong>staff</strong> / <strong>event123</strong>.
-      On Render use the password you set in Environment.
-    </p>
+      {% if error %}
+        <div class="status-banner invalid">{{ error }}</div>
+      {% endif %}
+
+      <form method="post" class="form-row">
+        <label class="field">
+          <span class="field-label">Username</span>
+          <input type="text" name="username" value="staff" autocomplete="username" required />
+        </label>
+        <label class="field">
+          <span class="field-label">Password</span>
+          <input type="password" name="password" autocomplete="current-password" required />
+        </label>
+        <button class="btn btn-block" type="submit">Sign in</button>
+      </form>
+      <p class="help" style="margin-top: 1rem;">
+        Local default: <strong>staff</strong> / <strong>event123</strong>
+      </p>
+    </div>
   </div>
 {% endblock %}

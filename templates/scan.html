@@ -1,33 +1,30 @@
 {% extends "base.html" %}
 {% block title %}Scan · {{ event_name }}{% endblock %}
+{% block body_class %}theme-all{% endblock %}
 {% block content %}
-  <div class="topbar">
+  <header class="app-header">
     <div>
-      <p class="brand">Staff desk</p>
+      <p class="brand">Check-in helper</p>
       <h1>Scan guest QR</h1>
-      <p class="sub">Stay logged in on this phone, then scan the guest’s QR with the camera.</p>
+      <p class="sub">Use phone camera on the badge, or paste the link below.</p>
     </div>
-    <div class="actions">
+    <nav class="app-nav">
       <a class="btn secondary" href="{{ url_for('home') }}">Guest list</a>
-    </div>
+    </nav>
+  </header>
+
+  <div class="panel">
+    <h2 class="panel-title">Quick steps</h2>
+    <p class="help">1. Stay logged in on this phone</p>
+    <p class="help">2. Open Camera → scan badge QR</p>
+    <p class="help">3. Mark lunch or dinner on the guest page</p>
   </div>
 
   <div class="panel">
-    <p class="help">
-      <strong>Normal use:</strong> open the phone camera → point at the guest’s QR PDF →
-      the check-in page opens with their details and mark options.
-    </p>
-    <p class="help">
-      If the camera does not open the page, paste the scanned value here:
-    </p>
+    <h2 class="panel-title">Paste QR link / token</h2>
     <form class="form-row" id="scan-form">
-      <input
-        id="scan-input"
-        type="text"
-        placeholder="Paste scanned URL or token"
-        autocomplete="off"
-      />
-      <button class="btn" type="submit">Open check-in</button>
+      <input id="scan-input" type="text" placeholder="Paste scanned URL or token" autocomplete="off" />
+      <button class="btn btn-block" type="submit">Open check-in</button>
     </form>
   </div>
 
@@ -36,12 +33,10 @@
       e.preventDefault();
       const raw = document.getElementById("scan-input").value.trim();
       if (!raw) return;
-
       let token = raw;
       const match = raw.match(/\/checkin\/([a-f0-9]{32})/i);
-      if (match) {
-        token = match[1];
-      } else if (!/^[a-f0-9]{32}$/i.test(raw)) {
+      if (match) token = match[1];
+      else if (!/^[a-f0-9]{32}$/i.test(raw)) {
         alert("Could not find a guest token.");
         return;
       }

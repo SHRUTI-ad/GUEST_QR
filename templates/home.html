@@ -9,23 +9,20 @@
   {%- endif -%}
 {% endblock %}
 {% block content %}
-  <div class="topbar">
+  <header class="app-header">
     <div>
-      <p class="brand">Staff desk{% if category %} · {{ category }}{% endif %}</p>
+      <p class="brand">Event Guest QR</p>
       <h1>{{ event_name }}</h1>
       <p class="sub">
-        {% if category %}
-          Viewing <strong>{{ category }}</strong> list · {{ event_date }}
-        {% else %}
-          {{ event_date }} · {{ event_venue }}
-        {% endif %}
+        {% if category %}{{ category }} list{% else %}All guests{% endif %}
+        · {{ event_date }}
       </p>
     </div>
-    <div class="actions">
-      <a class="btn secondary" href="{{ url_for('scan') }}">Scan helper</a>
-      <a class="btn secondary" href="{{ url_for('logout') }}">Log out</a>
-    </div>
-  </div>
+    <nav class="app-nav">
+      <a class="btn secondary" href="{{ url_for('scan') }}">Scan</a>
+      <a class="btn ghost" href="{{ url_for('logout') }}">Log out</a>
+    </nav>
+  </header>
 
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, msg in messages %}
@@ -33,19 +30,20 @@
     {% endfor %}
   {% endwith %}
 
+  {% if category %}
+    <div class="theme-banner">{{ category }} mode — page colors match this group</div>
+  {% endif %}
+
   <div class="stats">
     <div class="stat"><span>Guests</span><strong>{{ total }}</strong></div>
     <div class="stat"><span>Arrived</span><strong>{{ arrived }}</strong></div>
     <div class="stat"><span>Lunch</span><strong>{{ lunch_claimed }}</strong></div>
     <div class="stat"><span>Dinner</span><strong>{{ dinner_claimed }}</strong></div>
-    <div class="stat"><span>PDF emailed</span><strong>{{ sent }}</strong></div>
-    <div class="stat"><span>Guest confirmed</span><strong>{{ acked }}</strong></div>
+    <div class="stat"><span>Emailed</span><strong>{{ sent }}</strong></div>
+    <div class="stat"><span>Confirmed</span><strong>{{ acked }}</strong></div>
   </div>
 
-  {% if category %}
-    <div class="theme-banner">{{ category }} page — colors match this category</div>
-  {% endif %}
-
+  <p class="section-label">Categories</p>
   <div class="category-bar">
     <a class="cat-chip {% if not category %}active{% endif %}" href="{{ url_for('home', q=q) }}">
       All <strong>{{ total }}</strong>
@@ -58,127 +56,82 @@
     {% endfor %}
   </div>
 
-  <div class="panel" style="margin-bottom: 1rem;">
-    <p class="help" style="margin-top: 0;">
-      Categories: <span class="badge cat-delegate">Delegate</span>
-      <span class="badge cat-faculty">Faculty</span>
-      <span class="badge cat-organizer">Organizer</span>
-      <span class="badge cat-pharma">Pharma</span>
-      — each gets a different badge color on PDF and list.
-    </p>
+  <div class="panel">
+    <h2 class="panel-title">Tools</h2>
+    <div class="toolbar-grid">
+      <form method="get" action="{{ url_for('home') }}" class="search-bar">
+        {% if category %}<input type="hidden" name="category" value="{{ category }}" />{% endif %}
+        <label class="field">
+          <span class="field-label">Search guests</span>
+          <input type="search" name="q" value="{{ q or '' }}" placeholder="Name, phone, email, city…" autocomplete="off" />
+        </label>
+        <button class="btn" type="submit">Search</button>
+        {% if q or category %}
+          <a class="btn secondary" href="{{ url_for('home') }}">Reset</a>
+        {% endif %}
+      </form>
 
-    <form method="post" action="{{ url_for('upload_excel') }}" enctype="multipart/form-data"
-          class="form-row" style="margin-top: 0.85rem;">
-      <label class="field">
-        <span class="field-label">Upload guest Excel (.xlsx)</span>
-        <input type="file" name="excel_file" accept=".xlsx" required />
-      </label>
-      <button class="btn" type="submit">Import Excel list</button>
-    </form>
-
-    <div class="actions" style="margin-top: 0.75rem;">
-      <a class="btn secondary" href="{{ url_for('sample_excel') }}">Download sample Excel</a>
-      {% if email_ready %}
-        <form method="post" action="{{ url_for('send_all') }}">
-          <button class="btn" type="submit"
-            onclick="return confirm('Email unique QR PDFs to all {{ total }} guests?');">
-            Send QR PDF to all guests (1 click)
-          </button>
-        </form>
-      {% endif %}
+      <form method="post" action="{{ url_for('upload_excel') }}" enctype="multipart/form-data" class="form-row">
+        <label class="field">
+          <span class="field-label">Import Excel list</span>
+          <input type="file" name="excel_file" accept=".xlsx" required />
+        </label>
+        <div class="actions">
+          <button class="btn secondary" type="submit">Upload</button>
+          <a class="btn secondary" href="{{ url_for('sample_excel') }}">Sample Excel</a>
+        </div>
+      </form>
     </div>
+    {% if email_ready %}
+      <form method="post" action="{{ url_for('send_all') }}" style="margin-top: 0.85rem;">
+        <button class="btn btn-block" type="submit"
+          onclick="return confirm('Email QR PDFs to all {{ total }} guests?');">
+          Send QR PDF to all guests
+        </button>
+      </form>
+    {% else %}
+      <p class="help" style="margin-top: 0.85rem;">Email send is offline here — use PDF download or local Excel script.</p>
+    {% endif %}
   </div>
 
-  <div class="panel">
-    <form method="get" action="{{ url_for('home') }}" class="search-bar">
-      {% if category %}
-        <input type="hidden" name="category" value="{{ category }}" />
-      {% endif %}
-      <label class="field" style="flex: 1;">
-        <span class="field-label">Search guest profile / check-in</span>
-        <input
-          type="search"
-          name="q"
-          value="{{ q or '' }}"
-          placeholder="Name, phone, email, city, specialty, category…"
-          autocomplete="off"
-        />
-      </label>
-      <button class="btn" type="submit">Search</button>
-      {% if q or category %}
-        <a class="btn secondary" href="{{ url_for('home') }}">Clear</a>
-      {% endif %}
-    </form>
-    <p class="help" style="margin: 0.5rem 0 0.85rem;">
-      Showing <strong>{{ shown }}</strong> of {{ total }} guest(s)
-      {% if category %} in <strong>{{ category }}</strong>{% endif %}
-      {% if q %} for “{{ q }}”{% endif %}.
-    </p>
+  <p class="section-label">
+    Showing {{ shown }} of {{ total }}
+    {% if category %} · {{ category }}{% endif %}
+    {% if q %} · “{{ q }}”{% endif %}
+  </p>
 
-    <table>
-      <thead>
-        <tr>
-          <th>Guest</th>
-          <th>Category</th>
-          <th>Specialty / City</th>
-          <th>Check-in details</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for g in guests %}
-        {% set cat = normalize_category(g.designation) %}
-        <tr>
-          <td data-label="Guest">
-            <strong>{{ g.name }}</strong><br />
-            <span class="help">{{ g.email }} · {{ g.phone }}</span>
-          </td>
-          <td data-label="Category">
-            <span class="badge {{ category_colors[cat].css }}">{{ cat }}</span>
-          </td>
-          <td data-label="Specialty / City">{{ g.specialty or '—' }} · {{ g.city or '—' }}</td>
-          <td data-label="Check-in details">
-            <div class="check-details">
-              <div>
-                Lunch:
-                {% if g.lunch_claimed %}
-                  <span class="badge claimed">Claimed</span>
-                {% else %}
-                  <span class="badge">Not yet</span>
-                {% endif %}
-              </div>
-              <div>
-                Dinner:
-                {% if g.dinner_claimed %}
-                  <span class="badge claimed">Claimed</span>
-                {% else %}
-                  <span class="badge">Not yet</span>
-                {% endif %}
-              </div>
-              {% if g.pdf_sent %}<span class="badge ok">PDF sent</span>{% endif %}
-              {% if g.email_acked %}<span class="badge ok">Confirmed</span>{% endif %}
+  <div class="guest-list">
+    {% for g in guests %}
+      {% set cat = normalize_category(g.designation) %}
+      <article class="guest-card">
+        <div class="guest-card-top">
+          <div>
+            <h3>{{ g.name }}</h3>
+            <div class="guest-meta">
+              {{ g.email }}{% if g.phone %} · {{ g.phone }}{% endif %}<br />
+              {{ g.specialty or '—' }} · {{ g.city or '—' }}
             </div>
-          </td>
-          <td data-label="Actions">
-            <div class="row-actions">
-              <a class="btn secondary" href="{{ url_for('pdf_ticket', token=g.token) }}">PDF</a>
-              {% if email_ready %}
-              <form method="post" action="{{ url_for('send_one', guest_id=g.id) }}" style="display:inline;">
-                <button class="btn secondary" type="submit">Email QR</button>
-              </form>
-              {% endif %}
-              <a class="btn" href="{{ url_for('checkin', token=g.token) }}">Check-in</a>
-            </div>
-          </td>
-        </tr>
-        {% else %}
-        <tr>
-          <td colspan="5">
-            <p class="help" style="margin: 0.5rem 0;">No guests matched.</p>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+          </div>
+          <span class="badge {{ category_colors[cat].css }}">{{ cat }}</span>
+        </div>
+        <div class="guest-status">
+          {% if g.lunch_claimed %}<span class="badge claimed">Lunch done</span>{% else %}<span class="badge">Lunch pending</span>{% endif %}
+          {% if g.dinner_claimed %}<span class="badge claimed">Dinner done</span>{% else %}<span class="badge">Dinner pending</span>{% endif %}
+          {% if g.pdf_sent %}<span class="badge ok">PDF sent</span>{% endif %}
+          {% if g.email_acked %}<span class="badge ok">Confirmed</span>{% endif %}
+        </div>
+        <div class="row-actions">
+          <a class="btn secondary" href="{{ url_for('pdf_ticket', token=g.token) }}">PDF</a>
+          {% if email_ready %}
+            <form method="post" action="{{ url_for('send_one', guest_id=g.id) }}">
+              <button class="btn secondary" type="submit">Email</button>
+            </form>
+          {% endif %}
+          <a class="btn" href="{{ url_for('checkin', token=g.token) }}">Check-in</a>
+        </div>
+      </article>
+    {% else %}
+      <div class="panel empty-state">No guests found. Try another search or import Excel.</div>
+    {% endfor %}
   </div>
 {% endblock %}
