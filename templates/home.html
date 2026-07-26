@@ -1,11 +1,25 @@
 {% extends "base.html" %}
 {% block title %}Guest list · {{ event_name }}{% endblock %}
+{% block body_class %}{% if category %}theme-{{ category|lower }}{% else %}theme-all{% endif %}{% endblock %}
+{% block theme_color %}
+  {%- if category == 'Faculty' -%}#1d4ed8
+  {%- elif category == 'Organizer' -%}#c2410c
+  {%- elif category == 'Pharma' -%}#6d28d9
+  {%- else -%}#0f6e56
+  {%- endif -%}
+{% endblock %}
 {% block content %}
   <div class="topbar">
     <div>
-      <p class="brand">Staff desk</p>
+      <p class="brand">Staff desk{% if category %} · {{ category }}{% endif %}</p>
       <h1>{{ event_name }}</h1>
-      <p class="sub">{{ event_date }} · {{ event_venue }}</p>
+      <p class="sub">
+        {% if category %}
+          Viewing <strong>{{ category }}</strong> list · {{ event_date }}
+        {% else %}
+          {{ event_date }} · {{ event_venue }}
+        {% endif %}
+      </p>
     </div>
     <div class="actions">
       <a class="btn secondary" href="{{ url_for('scan') }}">Scan helper</a>
@@ -27,6 +41,10 @@
     <div class="stat"><span>PDF emailed</span><strong>{{ sent }}</strong></div>
     <div class="stat"><span>Guest confirmed</span><strong>{{ acked }}</strong></div>
   </div>
+
+  {% if category %}
+    <div class="theme-banner">{{ category }} page — colors match this category</div>
+  {% endif %}
 
   <div class="category-bar">
     <a class="cat-chip {% if not category %}active{% endif %}" href="{{ url_for('home', q=q) }}">

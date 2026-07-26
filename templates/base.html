@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#0f6e56" />
+  <meta name="theme-color" content="{% block theme_color %}#0f6e56{% endblock %}" />
   <meta name="mobile-web-app-capable" content="yes" />
   <title>{% block title %}{{ event_name }}{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
   <div class="wrap">
     {% block content %}{% endblock %}
   </div>

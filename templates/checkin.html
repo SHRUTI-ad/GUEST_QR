@@ -1,9 +1,21 @@
 {% extends "base.html" %}
 {% block title %}Check-in · {{ event_name }}{% endblock %}
+{% block body_class %}{% if guest %}theme-{{ normalize_category(guest.designation)|lower }}{% endif %}{% endblock %}
+{% block theme_color %}
+  {%- if guest -%}
+    {%- set cat = normalize_category(guest.designation) -%}
+    {%- if cat == 'Faculty' -%}#1d4ed8
+    {%- elif cat == 'Organizer' -%}#c2410c
+    {%- elif cat == 'Pharma' -%}#6d28d9
+    {%- else -%}#0f6e56
+    {%- endif -%}
+  {%- else -%}#0f6e56
+  {%- endif -%}
+{% endblock %}
 {% block content %}
   <div class="topbar">
     <div>
-      <p class="brand">Gate / meal desk</p>
+      <p class="brand">Gate / meal desk{% if guest %} · {{ normalize_category(guest.designation) }}{% endif %}</p>
       <h1>Guest check-in</h1>
       <p class="sub">{{ event_name }} · same QR for lunch &amp; dinner</p>
     </div>
