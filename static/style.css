@@ -237,6 +237,59 @@ th {
   color: var(--warn);
 }
 
+.badge.cat-delegate,
+.cat-chip.cat-delegate {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.badge.cat-faculty,
+.cat-chip.cat-faculty {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.badge.cat-organizer,
+.cat-chip.cat-organizer {
+  background: #ffedd5;
+  color: #9a3412;
+}
+
+.badge.cat-pharma,
+.cat-chip.cat-pharma {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+.category-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+}
+
+.cat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.cat-chip:hover {
+  text-decoration: none;
+  filter: brightness(0.98);
+}
+
+.cat-chip.active {
+  outline: 2px solid var(--ink);
+}
+
 .row-actions {
   display: flex;
   flex-wrap: wrap;

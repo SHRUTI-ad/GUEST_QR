@@ -63,7 +63,42 @@ EVENT_VENUE = "Main Hall, City Convention Center"
 # Example: http://10.197.190.212:5050
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 
+# Guest categories (badge color). "Delicate" typo maps to Delegate.
+CATEGORIES = ("Delegate", "Faculty", "Organizer", "Pharma")
+CATEGORY_COLORS = {
+    # RGB 0-1 for PDF + CSS class key
+    "Delegate": {"rgb": (0.06, 0.43, 0.34), "css": "cat-delegate"},
+    "Faculty": {"rgb": (0.11, 0.31, 0.75), "css": "cat-faculty"},
+    "Organizer": {"rgb": (0.71, 0.33, 0.04), "css": "cat-organizer"},
+    "Pharma": {"rgb": (0.43, 0.16, 0.75), "css": "cat-pharma"},
+}
+CATEGORY_ALIASES = {
+    "delegate": "Delegate",
+    "delicate": "Delegate",  # common typo
+    "faculty": "Faculty",
+    "organizer": "Organizer",
+    "organiser": "Organizer",
+    "pharma": "Pharma",
+    "pharmaceutical": "Pharma",
+}
+
+
+def normalize_category(value: str | None) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return "Delegate"
+    mapped = CATEGORY_ALIASES.get(raw.lower())
+    if mapped:
+        return mapped
+    # Title-case exact match against known list
+    for cat in CATEGORIES:
+        if raw.lower() == cat.lower():
+            return cat
+    return "Delegate"
+
+
 SAMPLE_GUESTS = [
+    # Delegate
     {
         "name": "Shruti Anandas",
         "email": "shrutianandas123@gmail.com",
@@ -91,15 +126,7 @@ SAMPLE_GUESTS = [
         "designation": "Delegate",
         "meal": "Vegetarian",
     },
-    {
-        "name": "Priya Patel",
-        "email": "priya.patel.test@example.com",
-        "phone": "9123456789",
-        "specialty": "Pediatrics",
-        "city": "Vadodara",
-        "designation": "Delegate",
-        "meal": "Non-Vegetarian",
-    },
+    # Faculty
     {
         "name": "Rohan Mehta",
         "email": "rohan.mehta.test@example.com",
@@ -110,53 +137,84 @@ SAMPLE_GUESTS = [
         "meal": "Vegan",
     },
     {
-        "name": "Sneha Iyer",
-        "email": "sneha.iyer.test@example.com",
-        "phone": "9001122334",
-        "specialty": "Dermatology",
+        "name": "Dr. Neha Kapoor",
+        "email": "neha.kapoor.test@example.com",
+        "phone": "9900112233",
+        "specialty": "Cardiology",
         "city": "Ahmedabad",
-        "designation": "Delegate",
+        "designation": "Faculty",
         "meal": "Vegetarian",
     },
     {
-        "name": "Vikram Singh",
-        "email": "vikram.singh.test@example.com",
-        "phone": "9555512121",
+        "name": "Dr. Sameer Joshi",
+        "email": "sameer.joshi.test@example.com",
+        "phone": "9911223344",
         "specialty": "Neurology",
-        "city": "Gandhinagar",
-        "designation": "Delegate",
+        "city": "Vadodara",
+        "designation": "Faculty",
         "meal": "Non-Vegetarian",
     },
+    # Organizer
     {
         "name": "Ananya Gupta",
         "email": "ananya.gupta.test@example.com",
         "phone": "9811122233",
-        "specialty": "Gynecology",
-        "city": "Bhavnagar",
-        "designation": "Reception Committee Member",
+        "specialty": "Event Ops",
+        "city": "Ahmedabad",
+        "designation": "Organizer",
         "meal": "Vegetarian",
     },
     {
         "name": "Karan Desai",
         "email": "karan.desai.test@example.com",
         "phone": "9822233344",
-        "specialty": "Radiology",
-        "city": "Jamnagar",
-        "designation": "Delegate",
+        "specialty": "Registration Desk",
+        "city": "Ahmedabad",
+        "designation": "Organizer",
         "meal": "Non-Vegetarian",
     },
     {
+        "name": "Pooja Shah",
+        "email": "pooja.shah.test@example.com",
+        "phone": "9833344455",
+        "specialty": "Hospitality",
+        "city": "Gandhinagar",
+        "designation": "Organizer",
+        "meal": "Vegetarian",
+    },
+    # Pharma
+    {
         "name": "Meera Nair",
         "email": "meera.nair.test@example.com",
-        "phone": "9833344455",
-        "specialty": "Anesthesiology",
-        "city": "Anand",
-        "designation": "Delegate",
+        "phone": "9844455566",
+        "specialty": "Medical Affairs",
+        "city": "Mumbai",
+        "designation": "Pharma",
         "meal": "Vegan",
+    },
+    {
+        "name": "Rahul Verma",
+        "email": "rahul.verma.test@example.com",
+        "phone": "9855566677",
+        "specialty": "Sales",
+        "city": "Pune",
+        "designation": "Pharma",
+        "meal": "Non-Vegetarian",
+    },
+    {
+        "name": "Isha Trivedi",
+        "email": "isha.trivedi.test@example.com",
+        "phone": "9866677788",
+        "specialty": "Marketing",
+        "city": "Ahmedabad",
+        "designation": "Pharma",
+        "meal": "Vegetarian",
     },
 ]
 
-SAMPLE_XLSX = BASE_DIR / "guests_badge_sample.xlsx"
+SAMPLE_XLSX = BASE_DIR / "guests_categories_sample.xlsx"
+if not SAMPLE_XLSX.exists():
+    SAMPLE_XLSX = BASE_DIR / "guests_badge_sample.xlsx"
 if not SAMPLE_XLSX.exists():
     SAMPLE_XLSX = BASE_DIR / "guests_sample.xlsx"
 
@@ -222,7 +280,7 @@ def _guest_insert_values(guest: dict) -> tuple:
         guest.get("table_no") or "",
         guest.get("specialty") or "",
         guest.get("city") or "",
-        guest.get("designation") or "Delegate",
+        normalize_category(guest.get("designation") or guest.get("category")),
         uuid.uuid4().hex,
     )
 
@@ -274,7 +332,14 @@ def read_guests_from_excel(file_storage) -> list[dict]:
         "phone": {"phone", "mobile", "contact", "phone number"},
         "specialty": {"specialty", "speciality", "field", "department"},
         "city": {"city", "place", "location"},
-        "designation": {"designation", "role", "category", "type"},
+        "designation": {
+            "designation",
+            "role",
+            "category",
+            "type",
+            "group",
+            "badge",
+        },
         "meal": {"meal", "meal preference", "preference", "food"},
     }
 
@@ -314,7 +379,7 @@ def read_guests_from_excel(file_storage) -> list[dict]:
                 "phone": cell(row, "phone"),
                 "specialty": cell(row, "specialty"),
                 "city": cell(row, "city"),
-                "designation": cell(row, "designation", "Delegate"),
+                "designation": normalize_category(cell(row, "designation", "Delegate")),
                 "meal": cell(row, "meal", "Vegetarian"),
                 "table_no": "",
             }
@@ -382,22 +447,31 @@ def _guest_field(guest: sqlite3.Row, key: str, default: str = "") -> str:
     return (str(value).strip() if value is not None else "") or default
 
 
+def category_style(guest: sqlite3.Row | dict) -> dict:
+    if isinstance(guest, dict):
+        cat = normalize_category(guest.get("designation"))
+    else:
+        cat = normalize_category(_guest_field(guest, "designation", "Delegate"))
+    return {"name": cat, **CATEGORY_COLORS[cat]}
+
+
 def build_ticket_pdf(guest: sqlite3.Row) -> io.BytesIO:
-    """Badge-style PDF: name, specialty, city, designation + one shared QR."""
+    """Badge-style PDF: name, specialty, city, category color + one shared QR."""
     badge_w, badge_h = 105 * mm, 160 * mm
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=(badge_w, badge_h))
 
-    purple = (0.36, 0.18, 0.56)
-    purple_dark = (0.25, 0.10, 0.42)
+    style = category_style(guest)
+    accent = style["rgb"]
+    accent_dark = tuple(max(0.0, c - 0.12) for c in accent)
     ink = (0.12, 0.10, 0.16)
 
     # Background
     pdf.setFillColorRGB(1, 1, 1)
     pdf.rect(0, 0, badge_w, badge_h, fill=1, stroke=0)
 
-    # Header band
-    pdf.setFillColorRGB(*purple)
+    # Header band (category color)
+    pdf.setFillColorRGB(*accent)
     pdf.rect(0, badge_h - 38 * mm, badge_w, 38 * mm, fill=1, stroke=0)
 
     pdf.setFillColorRGB(1, 1, 1)
@@ -411,7 +485,7 @@ def build_ticket_pdf(guest: sqlite3.Row) -> io.BytesIO:
     name = _guest_field(guest, "name").upper()
     specialty = _guest_field(guest, "specialty").upper()
     city = _guest_field(guest, "city").upper()
-    designation = _guest_field(guest, "designation", "DELEGATE").upper()
+    designation = style["name"].upper()
     code = (_guest_field(guest, "token")[:8] or "GUEST").upper()
 
     pdf.setFillColorRGB(*ink)
@@ -435,7 +509,7 @@ def build_ticket_pdf(guest: sqlite3.Row) -> io.BytesIO:
         detail_y -= 7 * mm
 
     # One shared guest ID + QR (works for lunch and dinner)
-    pdf.setFillColorRGB(*purple)
+    pdf.setFillColorRGB(*accent)
     pdf.setFont("Helvetica-Bold", 9)
     pdf.drawCentredString(badge_w / 2, detail_y, code)
 
@@ -454,16 +528,16 @@ def build_ticket_pdf(guest: sqlite3.Row) -> io.BytesIO:
         height=qr_size,
         mask="auto",
     )
-    pdf.setFillColorRGB(*purple_dark)
+    pdf.setFillColorRGB(*accent_dark)
     pdf.setFont("Helvetica", 7)
     pdf.drawCentredString(badge_w / 2, qr_y - 5 * mm, "Scan for lunch & dinner")
 
-    # Footer band with designation
-    pdf.setFillColorRGB(*purple_dark)
+    # Footer band with category
+    pdf.setFillColorRGB(*accent_dark)
     pdf.rect(0, 0, badge_w, 16 * mm, fill=1, stroke=0)
     pdf.setFillColorRGB(1, 1, 1)
-    pdf.setFont("Helvetica-Bold", 8)
-    pdf.drawCentredString(badge_w / 2, 6 * mm, designation[:40])
+    pdf.setFont("Helvetica-Bold", 9)
+    pdf.drawCentredString(badge_w / 2, 6 * mm, designation)
 
     pdf.showPage()
     pdf.save()
@@ -589,6 +663,23 @@ def _send_via_resend(cfg: dict, guest: sqlite3.Row, pdf_bytes: bytes, filename: 
         raise RuntimeError(f"Resend error {exc.code}: {detail}") from exc
 
 
+def _smtp_send_message(
+    host: str, port: int, user: str, password: str, msg: EmailMessage
+) -> None:
+    context = ssl.create_default_context()
+    if port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=30, context=context) as server:
+            server.login(user, password)
+            server.send_message(msg)
+    else:
+        with smtplib.SMTP(host, port, timeout=30) as server:
+            server.ehlo()
+            server.starttls(context=context)
+            server.ehlo()
+            server.login(user, password)
+            server.send_message(msg)
+
+
 def _send_via_smtp(cfg: dict, guest: sqlite3.Row, pdf_bytes: bytes, filename: str) -> None:
     msg = EmailMessage()
     msg["Subject"] = f"Your QR pass - {EVENT_NAME}"
@@ -608,30 +699,32 @@ def _send_via_smtp(cfg: dict, guest: sqlite3.Row, pdf_bytes: bytes, filename: st
     user = cfg["smtp_user"]
     password = str(cfg["smtp_password"]).replace(" ", "")
 
-    try:
-        if port == 465:
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(host, port, timeout=45, context=context) as server:
-                server.login(user, password)
-                server.send_message(msg)
-        else:
-            with smtplib.SMTP(host, port, timeout=45) as server:
-                server.ehlo()
-                server.starttls(context=ssl.create_default_context())
-                server.ehlo()
-                server.login(user, password)
-                server.send_message(msg)
-    except smtplib.SMTPAuthenticationError as exc:
-        raise RuntimeError(
-            "Gmail login failed. Use a 16-char App Password (no spaces), "
-            "not your normal Gmail password."
-        ) from exc
-    except (smtplib.SMTPConnectError, TimeoutError, OSError) as exc:
-        raise RuntimeError(
-            "Could not connect to Gmail SMTP. Render free plans often block "
-            "port 587. Add RESEND_API_KEY instead (https://resend.com), or "
-            "download PDF and send manually."
-        ) from exc
+    # Try configured port, then the other common Gmail port
+    ports_to_try = [port]
+    for alt in (465, 587):
+        if alt not in ports_to_try:
+            ports_to_try.append(alt)
+
+    last_error: Exception | None = None
+    for try_port in ports_to_try:
+        try:
+            _smtp_send_message(host, try_port, user, password, msg)
+            return
+        except smtplib.SMTPAuthenticationError as exc:
+            raise RuntimeError(
+                "Gmail login failed. Use a 16-character Google App Password "
+                "(Google Account -> Security -> 2-Step Verification -> App passwords). "
+                "Do not use your normal Gmail password."
+            ) from exc
+        except (smtplib.SMTPConnectError, TimeoutError, OSError) as exc:
+            last_error = exc
+            continue
+
+    raise RuntimeError(
+        "Could not connect to Gmail SMTP (ports 587/465 blocked or network issue). "
+        "Try: turn OFF office VPN, use home/mobile hotspot, then retry. "
+        f"Technical: {last_error}"
+    ) from last_error
 
 
 def send_pdf_email(guest: sqlite3.Row, pdf_buffer: io.BytesIO) -> None:
@@ -669,6 +762,10 @@ def inject_event():
         "event_venue": EVENT_VENUE,
         "email_ready": email_is_configured(),
         "staff_logged_in": bool(session.get("staff")),
+        "categories": CATEGORIES,
+        "category_colors": CATEGORY_COLORS,
+        "normalize_category": normalize_category,
+        "category_style": category_style,
     }
 
 
@@ -702,6 +799,13 @@ def logout():
 @login_required
 def home():
     q = (request.args.get("q") or "").strip()
+    raw_cat = (request.args.get("category") or "").strip()
+    category = (
+        normalize_category(raw_cat)
+        if raw_cat and raw_cat.lower() != "all"
+        else ""
+    )
+
     conn = get_db()
     all_guests = conn.execute("SELECT * FROM guests ORDER BY id").fetchall()
     arrived = sum(1 for g in all_guests if g["arrived"])
@@ -709,25 +813,27 @@ def home():
     dinner_claimed = sum(1 for g in all_guests if g["dinner_claimed"])
     sent = sum(1 for g in all_guests if g["pdf_sent"])
     acked = sum(1 for g in all_guests if g["email_acked"])
+    category_counts = {
+        cat: sum(1 for g in all_guests if normalize_category(g["designation"]) == cat)
+        for cat in CATEGORIES
+    }
 
+    guests = list(all_guests)
+    if category:
+        guests = [g for g in guests if normalize_category(g["designation"]) == category]
     if q:
-        like = f"%{q.lower()}%"
-        guests = conn.execute(
-            """
-            SELECT * FROM guests
-            WHERE lower(name) LIKE ?
-               OR lower(email) LIKE ?
-               OR lower(phone) LIKE ?
-               OR lower(COALESCE(specialty, '')) LIKE ?
-               OR lower(COALESCE(city, '')) LIKE ?
-               OR lower(COALESCE(designation, '')) LIKE ?
-               OR lower(meal) LIKE ?
-            ORDER BY name
-            """,
-            (like, like, like, like, like, like, like),
-        ).fetchall()
-    else:
-        guests = all_guests
+        needle = q.lower()
+        guests = [
+            g
+            for g in guests
+            if needle in (g["name"] or "").lower()
+            or needle in (g["email"] or "").lower()
+            or needle in (g["phone"] or "").lower()
+            or needle in (g["specialty"] or "").lower()
+            or needle in (g["city"] or "").lower()
+            or needle in (g["designation"] or "").lower()
+            or needle in (g["meal"] or "").lower()
+        ]
     conn.close()
 
     return render_template(
@@ -741,6 +847,8 @@ def home():
         total=len(all_guests),
         shown=len(guests),
         q=q,
+        category=category,
+        category_counts=category_counts,
     )
 
 

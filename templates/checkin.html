@@ -39,8 +39,11 @@
         <dd>{{ guest.specialty or '—' }}</dd>
         <dt>City</dt>
         <dd>{{ guest.city or '—' }}</dd>
-        <dt>Designation</dt>
-        <dd>{{ guest.designation or 'Delegate' }}</dd>
+        <dt>Category</dt>
+        <dd>
+          {% set cat = normalize_category(guest.designation) %}
+          <span class="badge {{ category_colors[cat].css }}">{{ cat }}</span>
+        </dd>
         <dt>Food preference</dt>
         <dd>{{ guest.meal or '—' }}</dd>
         <dt>Lunch</dt>

@@ -28,10 +28,25 @@
     <div class="stat"><span>Guest confirmed</span><strong>{{ acked }}</strong></div>
   </div>
 
+  <div class="category-bar">
+    <a class="cat-chip {% if not category %}active{% endif %}" href="{{ url_for('home', q=q) }}">
+      All <strong>{{ total }}</strong>
+    </a>
+    {% for cat in categories %}
+      <a class="cat-chip {{ category_colors[cat].css }} {% if category == cat %}active{% endif %}"
+         href="{{ url_for('home', category=cat, q=q) }}">
+        {{ cat }} <strong>{{ category_counts.get(cat, 0) }}</strong>
+      </a>
+    {% endfor %}
+  </div>
+
   <div class="panel" style="margin-bottom: 1rem;">
     <p class="help" style="margin-top: 0;">
-      <strong>Flow:</strong> Upload Excel → email badge PDF (name, specialty, city + one guest QR) →
-      guest confirms received → staff scan the same QR at lunch and dinner.
+      Categories: <span class="badge cat-delegate">Delegate</span>
+      <span class="badge cat-faculty">Faculty</span>
+      <span class="badge cat-organizer">Organizer</span>
+      <span class="badge cat-pharma">Pharma</span>
+      — each gets a different badge color on PDF and list.
     </p>
 
     <form method="post" action="{{ url_for('upload_excel') }}" enctype="multipart/form-data"
@@ -54,42 +69,39 @@
         </form>
       {% endif %}
     </div>
-    {% if not email_ready %}
-      <p class="help" style="margin-top: 0.75rem;">
-        Email not configured — set <code>RESEND_API_KEY</code> on Render to enable 1-click send.
-      </p>
-    {% endif %}
   </div>
 
   <div class="panel">
     <form method="get" action="{{ url_for('home') }}" class="search-bar">
+      {% if category %}
+        <input type="hidden" name="category" value="{{ category }}" />
+      {% endif %}
       <label class="field" style="flex: 1;">
         <span class="field-label">Search guest profile / check-in</span>
         <input
           type="search"
           name="q"
           value="{{ q or '' }}"
-          placeholder="Name, phone, email, city, specialty…"
+          placeholder="Name, phone, email, city, specialty, category…"
           autocomplete="off"
         />
       </label>
       <button class="btn" type="submit">Search</button>
-      {% if q %}
+      {% if q or category %}
         <a class="btn secondary" href="{{ url_for('home') }}">Clear</a>
       {% endif %}
     </form>
     <p class="help" style="margin: 0.5rem 0 0.85rem;">
-      {% if q %}
-        Showing <strong>{{ shown }}</strong> of {{ total }} guest(s) for “{{ q }}”.
-      {% else %}
-        Showing all <strong>{{ total }}</strong> guest(s). Search to see lunch/dinner status quickly.
-      {% endif %}
+      Showing <strong>{{ shown }}</strong> of {{ total }} guest(s)
+      {% if category %} in <strong>{{ category }}</strong>{% endif %}
+      {% if q %} for “{{ q }}”{% endif %}.
     </p>
 
     <table>
       <thead>
         <tr>
           <th>Guest</th>
+          <th>Category</th>
           <th>Specialty / City</th>
           <th>Check-in details</th>
           <th>Actions</th>
@@ -97,29 +109,22 @@
       </thead>
       <tbody>
         {% for g in guests %}
+        {% set cat = normalize_category(g.designation) %}
         <tr>
           <td data-label="Guest">
             <strong>{{ g.name }}</strong><br />
-            <span class="help">{{ g.email }} · {{ g.phone }}</span><br />
-            <span class="help">{{ g.designation or 'Delegate' }}</span>
+            <span class="help">{{ g.email }} · {{ g.phone }}</span>
+          </td>
+          <td data-label="Category">
+            <span class="badge {{ category_colors[cat].css }}">{{ cat }}</span>
           </td>
           <td data-label="Specialty / City">{{ g.specialty or '—' }} · {{ g.city or '—' }}</td>
           <td data-label="Check-in details">
             <div class="check-details">
               <div>
-                Arrived:
-                {% if g.arrived %}
-                  <span class="badge ok">Yes</span>
-                  <span class="help">{% if g.arrived_at %}{{ g.arrived_at }}{% endif %}</span>
-                {% else %}
-                  <span class="badge">No</span>
-                {% endif %}
-              </div>
-              <div>
                 Lunch:
                 {% if g.lunch_claimed %}
                   <span class="badge claimed">Claimed</span>
-                  <span class="help">{% if g.claimed_at %}{{ g.claimed_at }}{% endif %}</span>
                 {% else %}
                   <span class="badge">Not yet</span>
                 {% endif %}
@@ -128,7 +133,6 @@
                 Dinner:
                 {% if g.dinner_claimed %}
                   <span class="badge claimed">Claimed</span>
-                  <span class="help">{% if g.dinner_claimed_at %}{{ g.dinner_claimed_at }}{% endif %}</span>
                 {% else %}
                   <span class="badge">Not yet</span>
                 {% endif %}
@@ -151,8 +155,8 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="4">
-            <p class="help" style="margin: 0.5rem 0;">No guests matched your search.</p>
+          <td colspan="5">
+            <p class="help" style="margin: 0.5rem 0;">No guests matched.</p>
           </td>
         </tr>
         {% endfor %}
