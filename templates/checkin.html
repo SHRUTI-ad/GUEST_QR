@@ -13,14 +13,14 @@
   {%- endif -%}
 {% endblock %}
 {% block content %}
-  <header class="app-header">
+  <header class="app-header {% if guest %}header-{{ normalize_category(guest.designation)|lower }}{% else %}header-all{% endif %}">
     <div>
       <p class="brand">Check-in{% if guest %} · {{ normalize_category(guest.designation) }}{% endif %}</p>
       <h1>Guest verification</h1>
       <p class="sub">Same QR for lunch and dinner</p>
     </div>
     <nav class="app-nav">
-      <a class="btn secondary" href="{{ url_for('scan') }}">Scan next</a>
+      <a class="btn secondary" href="{{ url_for('scan') }}">Find guest</a>
       <a class="btn ghost" href="{{ url_for('home') }}">List</a>
     </nav>
   </header>

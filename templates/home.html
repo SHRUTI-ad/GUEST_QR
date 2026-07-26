@@ -9,9 +9,9 @@
   {%- endif -%}
 {% endblock %}
 {% block content %}
-  <header class="app-header">
+  <header class="app-header {% if category %}header-{{ category|lower }}{% else %}header-all{% endif %}">
     <div>
-      <p class="brand">Event Guest QR</p>
+      <p class="brand">Event Guest QR · {{ user_role|default('staff')|capitalize }}</p>
       <h1>{{ event_name }}</h1>
       <p class="sub">
         {% if category %}{{ category }} list{% else %}All guests{% endif %}
@@ -19,6 +19,7 @@
       </p>
     </div>
     <nav class="app-nav">
+      <a class="btn secondary" href="{{ url_for('scan') }}">Find guest</a>
       <a class="btn ghost" href="{{ url_for('logout') }}">Log out</a>
     </nav>
   </header>
@@ -29,60 +30,70 @@
     {% endfor %}
   {% endwith %}
 
-  {% if category %}
-    <div class="theme-banner">{{ category }} mode — page colors match this group</div>
-  {% endif %}
-
-  <div class="stats">
-    <div class="stat"><span>Guests</span><strong>{{ total }}</strong></div>
-    <div class="stat"><span>Arrived</span><strong>{{ arrived }}</strong></div>
-    <div class="stat"><span>Lunch</span><strong>{{ lunch_claimed }}</strong></div>
-    <div class="stat"><span>Dinner</span><strong>{{ dinner_claimed }}</strong></div>
-    <div class="stat"><span>Emailed</span><strong>{{ sent }}</strong></div>
-    <div class="stat"><span>Confirmed</span><strong>{{ acked }}</strong></div>
+  <div class="stats stats-4">
+    <a class="stat {% if not status %}active{% endif %}"
+       href="{{ url_for('home', category=category or None, q=q or None) }}">
+      <span>Guests</span><strong>{{ scoped_total }}</strong>
+    </a>
+    <a class="stat {% if status == 'arrived' %}active{% endif %}"
+       href="{{ url_for('home', category=category or None, status='arrived', q=q or None) }}">
+      <span>Arrived</span><strong>{{ arrived }}</strong>
+    </a>
+    <a class="stat {% if status == 'lunch' %}active{% endif %}"
+       href="{{ url_for('home', category=category or None, status='lunch', q=q or None) }}">
+      <span>Lunch</span><strong>{{ lunch_claimed }}</strong>
+    </a>
+    <a class="stat {% if status == 'dinner' %}active{% endif %}"
+       href="{{ url_for('home', category=category or None, status='dinner', q=q or None) }}">
+      <span>Dinner</span><strong>{{ dinner_claimed }}</strong>
+    </a>
   </div>
 
   <p class="section-label">Categories</p>
   <div class="category-bar">
-    <a class="cat-chip {% if not category %}active{% endif %}" href="{{ url_for('home', q=q) }}">
+    <a class="cat-chip {% if not category %}active{% endif %}"
+       href="{{ url_for('home', status=status or None, q=q or None) }}">
       All <strong>{{ total }}</strong>
     </a>
     {% for cat in categories %}
       <a class="cat-chip {{ category_colors[cat].css }} {% if category == cat %}active{% endif %}"
-         href="{{ url_for('home', category=cat, q=q) }}">
+         href="{{ url_for('home', category=cat, status=status or None, q=q or None) }}">
         {{ cat }} <strong>{{ category_counts.get(cat, 0) }}</strong>
       </a>
     {% endfor %}
   </div>
 
-  {# Excel import only on All tab #}
-  {% if not category %}
+  {% if is_admin and not category %}
     <div class="panel tools-compact">
       <form method="post" action="{{ url_for('upload_excel') }}" id="excel-upload-form" enctype="multipart/form-data">
         <input type="file" name="excel_file" id="excel-file-input" accept=".xlsx" hidden />
         <button type="button" class="btn btn-sm" id="excel-import-btn">Import Excel</button>
       </form>
-      <p class="help" style="margin-top: 0.45rem;">Uploading replaces the current guest list.</p>
+      <p class="help" style="margin-top: 0.45rem;">Admin only — uploading replaces the current guest list.</p>
     </div>
   {% endif %}
 
   <div class="panel">
     <form method="get" action="{{ url_for('home') }}" class="search-bar">
       {% if category %}<input type="hidden" name="category" value="{{ category }}" />{% endif %}
+      {% if status %}<input type="hidden" name="status" value="{{ status }}" />{% endif %}
       <label class="field">
         <span class="field-label">Search guests</span>
         <input type="search" name="q" value="{{ q or '' }}" placeholder="Name, phone, email, city…" autocomplete="off" />
       </label>
       <button class="btn" type="submit">Search</button>
-      {% if q or category %}
+      {% if q or category or status %}
         <a class="btn secondary" href="{{ url_for('home') }}">Reset</a>
       {% endif %}
     </form>
   </div>
 
   <p class="section-label">
-    Showing {{ shown }} of {{ total }}
+    Showing {{ shown }}
     {% if category %} · {{ category }}{% endif %}
+    {% if status == 'arrived' %} · Arrived{% endif %}
+    {% if status == 'lunch' %} · Lunch done{% endif %}
+    {% if status == 'dinner' %} · Dinner done{% endif %}
     {% if q %} · “{{ q }}”{% endif %}
   </p>
 
@@ -103,8 +114,6 @@
         <div class="guest-status">
           {% if g.lunch_claimed %}<span class="badge claimed">Lunch done</span>{% else %}<span class="badge">Lunch pending</span>{% endif %}
           {% if g.dinner_claimed %}<span class="badge claimed">Dinner done</span>{% else %}<span class="badge">Dinner pending</span>{% endif %}
-          {% if g.pdf_sent %}<span class="badge ok">PDF sent</span>{% endif %}
-          {% if g.email_acked %}<span class="badge ok">Confirmed</span>{% endif %}
         </div>
         <div class="row-actions">
           <a class="btn secondary" href="{{ url_for('pdf_ticket', token=g.token) }}">PDF</a>
@@ -112,33 +121,26 @@
         </div>
       </article>
     {% else %}
-      <div class="panel empty-state">No guests found. Try another search or import Excel from All tab.</div>
+      <div class="panel empty-state">No guests match this filter.</div>
     {% endfor %}
   </div>
 
-  {% if not category %}
+  {% if is_admin and not category %}
   <script>
     (function () {
       const form = document.getElementById("excel-upload-form");
       const input = document.getElementById("excel-file-input");
       const btn = document.getElementById("excel-import-btn");
       if (!form || !input || !btn) return;
-
-      btn.addEventListener("click", function () {
-        input.click();
-      });
-
+      btn.addEventListener("click", function () { input.click(); });
       input.addEventListener("change", function () {
         if (!input.files || !input.files.length) return;
         const name = input.files[0].name;
         const ok = confirm(
           "Import \"" + name + "\"?\n\nThis will REPLACE the current guest list with data from this Excel file."
         );
-        if (ok) {
-          form.submit();
-        } else {
-          input.value = "";
-        }
+        if (ok) form.submit();
+        else input.value = "";
       });
     })();
   </script>

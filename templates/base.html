@@ -10,6 +10,13 @@
 </head>
 <body class="{% block body_class %}{% endblock %}">
   <div class="wrap">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="status-banner {% if category == 'error' %}invalid{% else %}ok{% endif %}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
     {% block content %}{% endblock %}
   </div>
 </body>

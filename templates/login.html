@@ -1,12 +1,14 @@
 {% extends "base.html" %}
-{% block title %}Staff login · {{ event_name }}{% endblock %}
+{% block title %}Login · {{ event_name }}{% endblock %}
 {% block body_class %}theme-all{% endblock %}
 {% block content %}
   <div class="login-shell">
     <div class="panel login-panel">
-      <p class="brand">Staff only</p>
+      <p class="brand">Conference desk</p>
       <h1 style="margin-bottom: 0.35rem;">{{ event_name }}</h1>
-      <p class="help" style="margin-bottom: 1.1rem;">Sign in to manage guests and meal check-in.</p>
+      <p class="help" style="margin-bottom: 1.1rem;">
+        Admin can import guest Excel. Staff can search and check-in only.
+      </p>
 
       {% if error %}
         <div class="status-banner invalid">{{ error }}</div>
@@ -15,7 +17,7 @@
       <form method="post" class="form-row">
         <label class="field">
           <span class="field-label">Username</span>
-          <input type="text" name="username" value="staff" autocomplete="username" required />
+          <input type="text" name="username" autocomplete="username" required />
         </label>
         <label class="field">
           <span class="field-label">Password</span>
@@ -24,7 +26,9 @@
         <button class="btn btn-block" type="submit">Sign in</button>
       </form>
       <p class="help" style="margin-top: 1rem;">
-        Local default: <strong>staff</strong> / <strong>event123</strong>
+        Local defaults:<br />
+        Admin — <strong>admin</strong> / <strong>admin123</strong><br />
+        Staff — <strong>staff</strong> / <strong>event123</strong>
       </p>
     </div>
   </div>

@@ -83,12 +83,19 @@ a:hover { text-decoration: underline; }
   align-items: center;
   margin-bottom: 1.25rem;
   padding: 0.85rem 1rem;
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.92);
   border: 1px solid var(--line);
+  border-top: 4px solid var(--accent);
   border-radius: var(--radius);
   backdrop-filter: blur(8px);
   box-shadow: var(--shadow);
 }
+
+.app-header.header-all { border-top-color: #0f6e56; }
+.app-header.header-delegate { border-top-color: #0f6e56; }
+.app-header.header-faculty { border-top-color: #1d4ed8; }
+.app-header.header-organizer { border-top-color: #c2410c; }
+.app-header.header-pharma { border-top-color: #6d28d9; }
 
 .app-header .brand {
   margin: 0;
@@ -249,20 +256,38 @@ h1 {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 0.65rem;
   margin-bottom: 1rem;
 }
 
-@media (min-width: 900px) {
-  .stats { grid-template-columns: repeat(6, 1fr); }
+.stats.stats-4 {
+  grid-template-columns: repeat(2, 1fr);
 }
 
-.stat {
+@media (min-width: 720px) {
+  .stats.stats-4 { grid-template-columns: repeat(4, 1fr); }
+}
+
+a.stat {
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 0.85rem 0.9rem;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+a.stat:hover {
+  text-decoration: none;
+  border-color: var(--accent);
+}
+
+a.stat.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  background: var(--accent-soft);
 }
 
 .stat strong {

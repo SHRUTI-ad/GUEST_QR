@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Scan · {{ event_name }}{% endblock %}
+{% block title %}Find guest · {{ event_name }}{% endblock %}
 {% block body_class %}theme-all{% endblock %}
 {% block content %}
   <header class="app-header">
     <div>
       <p class="brand">Check-in helper</p>
-      <h1>Scan guest QR</h1>
-      <p class="sub">Use phone camera on the badge, or paste the link below.</p>
+      <h1>Find guest</h1>
+      <p class="sub">Enter the badge ID, scan the QR, or paste the check-in link.</p>
     </div>
     <nav class="app-nav">
       <a class="btn secondary" href="{{ url_for('home') }}">Guest list</a>
@@ -16,31 +16,26 @@
   <div class="panel">
     <h2 class="panel-title">Quick steps</h2>
     <p class="help">1. Stay logged in on this phone</p>
-    <p class="help">2. Open Camera → scan badge QR</p>
+    <p class="help">2. Type the 8-character ID from the badge (e.g. 9168B65B), or scan the QR</p>
     <p class="help">3. Mark lunch or dinner on the guest page</p>
   </div>
 
   <div class="panel">
-    <h2 class="panel-title">Paste QR link / token</h2>
-    <form class="form-row" id="scan-form">
-      <input id="scan-input" type="text" placeholder="Paste scanned URL or token" autocomplete="off" />
-      <button class="btn btn-block" type="submit">Open check-in</button>
+    <h2 class="panel-title">Badge ID / QR link</h2>
+    <form class="form-row" method="post" action="{{ url_for('scan') }}">
+      <input
+        name="code"
+        type="text"
+        placeholder="e.g. 9168B65B or paste QR link"
+        autocomplete="off"
+        autocapitalize="characters"
+        autofocus
+        required
+      />
+      <button class="btn btn-block" type="submit">Open guest</button>
     </form>
+    <p class="help" style="margin-top: 0.75rem;">
+      The short ID under the name on the PDF is enough — you do not need the full QR link.
+    </p>
   </div>
-
-  <script>
-    document.getElementById("scan-form").addEventListener("submit", function (e) {
-      e.preventDefault();
-      const raw = document.getElementById("scan-input").value.trim();
-      if (!raw) return;
-      let token = raw;
-      const match = raw.match(/\/checkin\/([a-f0-9]{32})/i);
-      if (match) token = match[1];
-      else if (!/^[a-f0-9]{32}$/i.test(raw)) {
-        alert("Could not find a guest token.");
-        return;
-      }
-      window.location.href = "/checkin/" + token;
-    });
-  </script>
 {% endblock %}

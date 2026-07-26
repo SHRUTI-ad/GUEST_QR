@@ -6,6 +6,7 @@ import base64
 import io
 import json
 import os
+import re
 import smtplib
 import sqlite3
 import ssl
@@ -50,12 +51,16 @@ app.config["SESSION_COOKIE_SECURE"] = _on_render or _public.startswith("https://
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 
-# Staff login (change before real use)
+# Logins: admin can import Excel; staff can check-in only
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
+ADMIN_PASSWORD_HASH = generate_password_hash(ADMIN_PASSWORD)
+
 STAFF_USERNAME = os.environ.get("STAFF_USERNAME", "staff")
 STAFF_PASSWORD = os.environ.get("STAFF_PASSWORD", "event123")
 STAFF_PASSWORD_HASH = generate_password_hash(STAFF_PASSWORD)
 
-EVENT_NAME = "Monsoon Conference Lunch Meetup"
+EVENT_NAME = "Conference Lunch Meetup"
 EVENT_DATE = "Saturday, 25 July 2026 · 12:30 PM"
 EVENT_VENUE = "Main Hall, City Convention Center"
 
@@ -395,8 +400,21 @@ def read_guests_from_excel(file_storage) -> list[dict]:
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
-        if not session.get("staff"):
+        if not session.get("user"):
             return redirect(url_for("login", next=request.path))
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("user"):
+            return redirect(url_for("login", next=request.path))
+        if session.get("role") != "admin":
+            flash("Only admin can import guest data.", "bad")
+            return redirect(url_for("home"))
         return view(*args, **kwargs)
 
     return wrapped
@@ -418,6 +436,35 @@ def get_guest_by_id(guest_id: int) -> sqlite3.Row | None:
     ).fetchone()
     conn.close()
     return guest
+
+
+def resolve_guest_code(raw: str) -> sqlite3.Row | None:
+    """Resolve full token, check-in URL, or short badge ID (first 8 of token)."""
+    value = (raw or "").strip()
+    if not value:
+        return None
+
+    match = re.search(r"/checkin/([a-fA-F0-9]{32})", value)
+    if match:
+        return get_guest_by_token(match.group(1).lower())
+
+    code = value.replace(" ", "").lower()
+    if re.fullmatch(r"[a-f0-9]{32}", code):
+        return get_guest_by_token(code)
+
+    # Short ID printed on PDF (e.g. 9168B65B)
+    if re.fullmatch(r"[a-f0-9]{6,12}", code):
+        conn = get_db()
+        rows = conn.execute(
+            "SELECT * FROM guests WHERE lower(substr(token, 1, ?)) = ?",
+            (len(code), code),
+        ).fetchall()
+        conn.close()
+        if len(rows) == 1:
+            return rows[0]
+        return None
+
+    return None
 
 
 def public_url(endpoint: str, **values) -> str:
@@ -756,12 +803,15 @@ def mark_pdf_sent(guest_id: int) -> None:
 
 @app.context_processor
 def inject_event():
+    role = session.get("role")
     return {
         "event_name": EVENT_NAME,
         "event_date": EVENT_DATE,
         "event_venue": EVENT_VENUE,
         "email_ready": email_is_configured(),
-        "staff_logged_in": bool(session.get("staff")),
+        "staff_logged_in": bool(session.get("user")),
+        "is_admin": role == "admin",
+        "user_role": role,
         "categories": CATEGORIES,
         "category_colors": CATEGORY_COLORS,
         "normalize_category": normalize_category,
@@ -771,20 +821,28 @@ def inject_event():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    if session.get("staff"):
+    if session.get("user"):
         return redirect(url_for("home"))
 
     error = None
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
+        if username == ADMIN_USERNAME and check_password_hash(
+            ADMIN_PASSWORD_HASH, password
+        ):
+            session["user"] = True
+            session["role"] = "admin"
+            nxt = request.args.get("next") or url_for("home")
+            return redirect(nxt)
         if username == STAFF_USERNAME and check_password_hash(
             STAFF_PASSWORD_HASH, password
         ):
-            session["staff"] = True
+            session["user"] = True
+            session["role"] = "staff"
             nxt = request.args.get("next") or url_for("home")
             return redirect(nxt)
-        error = "Invalid staff username or password."
+        error = "Invalid username or password."
 
     return render_template("login.html", error=error)
 
@@ -805,22 +863,38 @@ def home():
         if raw_cat and raw_cat.lower() != "all"
         else ""
     )
+    status = (request.args.get("status") or "").strip().lower()
+    if status not in {"", "all", "arrived", "lunch", "dinner"}:
+        status = ""
+    if status == "all":
+        status = ""
 
     conn = get_db()
     all_guests = conn.execute("SELECT * FROM guests ORDER BY id").fetchall()
-    arrived = sum(1 for g in all_guests if g["arrived"])
-    lunch_claimed = sum(1 for g in all_guests if g["lunch_claimed"])
-    dinner_claimed = sum(1 for g in all_guests if g["dinner_claimed"])
-    sent = sum(1 for g in all_guests if g["pdf_sent"])
-    acked = sum(1 for g in all_guests if g["email_acked"])
     category_counts = {
         cat: sum(1 for g in all_guests if normalize_category(g["designation"]) == cat)
         for cat in CATEGORIES
     }
 
-    guests = list(all_guests)
+    # Counts + list scoped to selected category (if any)
+    scoped = list(all_guests)
     if category:
-        guests = [g for g in guests if normalize_category(g["designation"]) == category]
+        scoped = [
+            g for g in scoped if normalize_category(g["designation"]) == category
+        ]
+
+    arrived = sum(1 for g in scoped if g["arrived"])
+    lunch_claimed = sum(1 for g in scoped if g["lunch_claimed"])
+    dinner_claimed = sum(1 for g in scoped if g["dinner_claimed"])
+
+    guests = scoped
+    if status == "arrived":
+        guests = [g for g in guests if g["arrived"]]
+    elif status == "lunch":
+        guests = [g for g in guests if g["lunch_claimed"]]
+    elif status == "dinner":
+        guests = [g for g in guests if g["dinner_claimed"]]
+
     if q:
         needle = q.lower()
         guests = [
@@ -842,18 +916,18 @@ def home():
         arrived=arrived,
         lunch_claimed=lunch_claimed,
         dinner_claimed=dinner_claimed,
-        sent=sent,
-        acked=acked,
         total=len(all_guests),
+        scoped_total=len(scoped),
         shown=len(guests),
         q=q,
         category=category,
+        status=status,
         category_counts=category_counts,
     )
 
 
 @app.route("/upload-excel", methods=["POST"])
-@login_required
+@admin_required
 def upload_excel():
     file = request.files.get("excel_file")
     if not file or not file.filename:
@@ -875,7 +949,7 @@ def upload_excel():
 
 
 @app.route("/sample-excel")
-@login_required
+@admin_required
 def sample_excel():
     if SAMPLE_XLSX.exists():
         return send_file(
@@ -1061,9 +1135,19 @@ def checkin(token: str):
     )
 
 
-@app.route("/scan")
+@app.route("/scan", methods=["GET", "POST"])
 @login_required
 def scan():
+    if request.method == "POST":
+        guest = resolve_guest_code(request.form.get("code", ""))
+        if guest:
+            return redirect(url_for("checkin", token=guest["token"]))
+        flash(
+            "No guest found for that ID. Use the 8-character code on the badge "
+            "(e.g. 9168B65B), or paste the full QR link.",
+            "error",
+        )
+        return redirect(url_for("scan"))
     return render_template("scan.html")
 
 
