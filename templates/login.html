@@ -6,9 +6,6 @@
     <div class="panel login-panel">
       <p class="brand">Conference desk</p>
       <h1 style="margin-bottom: 0.35rem;">{{ event_name }}</h1>
-      <p class="help" style="margin-bottom: 1.1rem;">
-        Admin can import guest Excel. Staff can search and check-in only.
-      </p>
 
       {% if error %}
         <div class="status-banner invalid">{{ error }}</div>
@@ -25,11 +22,6 @@
         </label>
         <button class="btn btn-block" type="submit">Sign in</button>
       </form>
-      <p class="help" style="margin-top: 1rem;">
-        Local defaults:<br />
-        Admin — <strong>admin</strong> / <strong>admin123</strong><br />
-        Staff — <strong>staff</strong> / <strong>event123</strong>
-      </p>
     </div>
   </div>
 {% endblock %}
