@@ -15,14 +15,14 @@
 
   <div class="panel">
     <h2 class="panel-title">Camera scan</h2>
-    <p class="help" id="scan-status">Tap Start camera, then point at the badge QR.</p>
+    <p class="help" id="scan-status">Opening camera… point at the next badge QR.</p>
     <div id="qr-reader" class="qr-reader"></div>
     <div class="scan-actions">
-      <button type="button" class="btn btn-block" id="start-scan-btn">Start camera</button>
+      <button type="button" class="btn btn-block" id="start-scan-btn" hidden>Start camera</button>
       <button type="button" class="btn btn-block secondary" id="stop-scan-btn" hidden>Stop camera</button>
     </div>
     <p class="help" style="margin-top: 0.75rem;">
-      Camera needs HTTPS (or localhost) and permission. Prefer the rear camera.
+      Camera starts automatically. Needs HTTPS and permission. Prefer the rear camera.
     </p>
   </div>
 
@@ -146,6 +146,17 @@
       window.addEventListener("pagehide", function () {
         if (scanner) scanner.stop().catch(function () {});
       });
+
+      // Auto-open camera when landing here (e.g. Scan next) so staff need not tap Start again
+      function autoStart() {
+        if (!window.Html5Qrcode) {
+          setTimeout(autoStart, 120);
+          return;
+        }
+        startScanner();
+      }
+      if (document.readyState === "complete") autoStart();
+      else window.addEventListener("load", autoStart);
     })();
   </script>
 {% endblock %}

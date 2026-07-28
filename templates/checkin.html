@@ -21,13 +21,16 @@
       <p class="sub">Same QR for lunch and dinner</p>
     </div>
     <nav class="app-nav">
-      <a class="btn secondary" href="{{ url_for('scan') }}">Scan next</a>
+      <a class="btn secondary" href="{{ url_for('scan', auto=1) }}">Scan next</a>
       <a class="btn ghost" href="{{ url_for('home') }}">List</a>
     </nav>
   </header>
 
   {% if status == "invalid" or not guest %}
     <div class="status-banner invalid">Unknown QR — guest not on the list.</div>
+    <a class="btn btn-block scan-next-btn" href="{{ url_for('scan', auto=1) }}" style="margin-top: 0.85rem;">
+      Scan next guest
+    </a>
   {% else %}
     {% if message %}
       <div class="status-banner {% if 'already' in message|lower %}claimed{% else %}ok{% endif %}">{{ message }}</div>
@@ -74,6 +77,13 @@
           </form>
         {% endif %}
       </div>
+
+      <a class="btn btn-block scan-next-btn" href="{{ url_for('scan', auto=1) }}" style="margin-top: 0.85rem;">
+        Scan next guest
+      </a>
+      <p class="help" style="margin-top: 0.45rem; text-align: center;">
+        Opens the camera again for the next badge.
+      </p>
     </div>
   {% endif %}
 {% endblock %}
