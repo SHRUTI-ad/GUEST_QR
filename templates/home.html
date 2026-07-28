@@ -66,10 +66,49 @@
   {% if is_admin and not category %}
     <div class="panel tools-compact">
       <form method="post" action="{{ url_for('upload_excel') }}" id="excel-upload-form" enctype="multipart/form-data">
+        <label class="field" style="margin-bottom: 0.55rem;">
+          <span class="field-label">Category for this Excel file</span>
+          <select name="import_category" id="import-category">
+            {% for cat in categories %}
+              <option value="{{ cat }}">{{ cat }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="help" style="display: flex; gap: 0.45rem; align-items: flex-start; margin-bottom: 0.65rem;">
+          <input type="checkbox" name="replace_all" value="1" id="replace-all" style="margin-top: 0.2rem;" />
+          <span>Clear ALL guests first, then import this file (use for a full fresh list).</span>
+        </label>
         <input type="file" name="excel_file" id="excel-file-input" accept=".xlsx" hidden />
-        <button type="button" class="btn btn-sm" id="excel-import-btn">Import Excel</button>
+        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+          <button type="button" class="btn btn-sm" id="excel-import-btn">Import Excel</button>
+        </div>
       </form>
-      <p class="help" style="margin-top: 0.45rem;">Admin only — same name + phone keeps the same QR/ID. Email optional.</p>
+      <form method="post" action="{{ url_for('clear_guests') }}" style="margin-top: 0.75rem; display: grid; gap: 0.45rem;">
+        <label class="field">
+          <span class="field-label">Clear guests</span>
+          <select name="clear_category" id="clear-category">
+            <option value="all">All categories</option>
+            {% for cat in categories %}
+              <option value="{{ cat }}">{{ cat }} only</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit" class="btn btn-sm secondary"
+          onclick="return confirm(document.getElementById('clear-category').value === 'all' ? 'Delete ALL guests in every category?' : ('Delete only ' + document.getElementById('clear-category').value + ' guests? Other categories stay.'));">
+          Clear selected
+        </button>
+      </form>
+      <form method="post" action="{{ url_for('load_sample_500') }}" style="margin-top: 0.55rem;">
+        <button type="submit" class="btn btn-sm"
+          onclick="return confirm('Replace the current list with 500 sample guests across all categories?');">
+          Load 500 sample guests
+        </button>
+      </form>
+      <p class="help" style="margin-top: 0.55rem;">
+        Excel columns: SR NO, NAME, CITY, MOBILE NUMBER (optional CATEGORY).
+        Sample file in project folder: <code>guests_500_sample.xlsx</code> — tick “Clear ALL” then Import.
+        Or use <strong>Load 500 sample guests</strong>. Clear can wipe one category or all.
+      </p>
     </div>
   {% endif %}
 
@@ -79,7 +118,7 @@
       {% if status %}<input type="hidden" name="status" value="{{ status }}" />{% endif %}
       <label class="field">
         <span class="field-label">Search guests</span>
-        <input type="search" name="q" value="{{ q or '' }}" placeholder="Name, phone, email, city…" autocomplete="off" />
+        <input type="search" name="q" value="{{ q or '' }}" placeholder="Name, phone, city…" autocomplete="off" />
       </label>
       <button class="btn" type="submit">Search</button>
       {% if q or category or status %}
@@ -105,8 +144,8 @@
           <div>
             <h3>{{ g.name }}</h3>
             <div class="guest-meta">
-              {{ g.email }}{% if g.phone %} · {{ g.phone }}{% endif %}<br />
-              {{ g.specialty or '—' }} · {{ g.city or '—' }}
+              {% if g.city %}{{ g.city }}{% endif %}{% if g.city and g.phone %} · {% endif %}{% if g.phone %}{{ g.phone }}{% endif %}
+              {% if not g.city and not g.phone %}—{% endif %}
             </div>
           </div>
           <span class="badge {{ category_colors[cat].css }}">{{ cat }}</span>
@@ -136,11 +175,14 @@
       input.addEventListener("change", function () {
         if (!input.files || !input.files.length) return;
         const name = input.files[0].name;
+        const cat = (document.getElementById("import-category") || {}).value || "Delegate";
+        const wipe = (document.getElementById("replace-all") || {}).checked;
         const ok = confirm(
-          "Import \"" + name + "\"?\n\n" +
-          "Same guest name + phone keeps the same QR code and ID (printed badges stay valid).\n" +
-          "New name/phone pairs get new QR/IDs. Guests missing from this file are removed.\n" +
-          "Email is optional."
+          "Import \"" + name + "\" as " + cat + "?\n\n" +
+          (wipe
+            ? "This will CLEAR every guest first, then import this file.\n"
+            : "This updates the " + cat + " list only (other categories stay).\n") +
+          "Same name + phone keeps the same QR/ID."
         );
         if (ok) form.submit();
         else input.value = "";

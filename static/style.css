@@ -459,7 +459,8 @@ input[type="text"],
 input[type="url"],
 input[type="password"],
 input[type="search"],
-input[type="file"] {
+input[type="file"],
+select {
   width: 100%;
   padding: 0.8rem 0.9rem;
   border: 1px solid var(--line);
@@ -469,7 +470,8 @@ input[type="file"] {
   background: #fff;
 }
 
-input:focus {
+input:focus,
+select:focus {
   outline: 2px solid var(--accent-soft);
   border-color: var(--accent);
 }

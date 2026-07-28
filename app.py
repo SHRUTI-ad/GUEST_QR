@@ -227,7 +227,9 @@ SAMPLE_GUESTS = [
     },
 ]
 
-SAMPLE_XLSX = BASE_DIR / "guests_categories_sample.xlsx"
+SAMPLE_XLSX = BASE_DIR / "guests_500_sample.xlsx"
+if not SAMPLE_XLSX.exists():
+    SAMPLE_XLSX = BASE_DIR / "guests_categories_sample.xlsx"
 if not SAMPLE_XLSX.exists():
     SAMPLE_XLSX = BASE_DIR / "guests_badge_sample.xlsx"
 if not SAMPLE_XLSX.exists():
@@ -332,19 +334,32 @@ def _insert_sample_guests(conn: sqlite3.Connection) -> None:
         )
 
 
-def sync_guests_from_rows(rows: list[dict]) -> dict:
+def sync_guests_from_rows(
+    rows: list[dict],
+    *,
+    replace_all: bool = False,
+    category_scope: str | None = None,
+) -> dict:
     """
     Merge Excel into the DB without changing QR/token for returning guests.
 
     Same name + phone = same person → keep token, short ID, and meal check-in flags.
-    New name/phone pair → new token. Guests missing from Excel are removed.
-    Email is optional and does not control identity.
+    New name/phone pair → new token.
+
+    replace_all: wipe every guest first, then import.
+    category_scope: only remove missing guests in that category (other categories kept).
     """
     conn = get_db()
-    existing = conn.execute("SELECT * FROM guests").fetchall()
+    if replace_all:
+        conn.execute("DELETE FROM guests")
+        existing = []
+    else:
+        existing = conn.execute("SELECT * FROM guests").fetchall()
+
     by_identity = {
         _guest_identity_key(row["name"], row["phone"]): row for row in existing
     }
+    scope = normalize_category(category_scope) if category_scope else None
 
     seen: set[str] = set()
     kept = 0
@@ -358,10 +373,12 @@ def sync_guests_from_rows(rows: list[dict]) -> dict:
             continue
         seen.add(key)
 
+        designation = normalize_category(
+            guest.get("designation") or guest.get("category") or scope or "Delegate"
+        )
         old = by_identity.get(key)
         email_value = (guest.get("email") or "").strip()
         if old:
-            # Keep existing email if Excel left it blank
             if not email_value:
                 email_value = (old["email"] or "").strip()
             conn.execute(
@@ -379,27 +396,35 @@ def sync_guests_from_rows(rows: list[dict]) -> dict:
                     guest.get("table_no") or "",
                     guest.get("specialty") or "",
                     guest.get("city") or "",
-                    normalize_category(
-                        guest.get("designation") or guest.get("category")
-                    ),
+                    designation,
                     old["id"],
                 ),
             )
             kept += 1
         else:
+            payload = dict(guest)
+            payload["designation"] = designation
             conn.execute(
                 """
                 INSERT INTO guests
                 (name, email, phone, meal, table_no, specialty, city, designation, token)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                _guest_insert_values(guest),
+                _guest_insert_values(payload),
             )
             created += 1
 
     removed = 0
     for key, old in by_identity.items():
-        if key not in seen:
+        if key in seen:
+            continue
+        if scope and normalize_category(old["designation"]) != scope:
+            continue
+        if not replace_all and scope is None:
+            # Full-file sync: remove anyone missing from the file
+            conn.execute("DELETE FROM guests WHERE id = ?", (old["id"],))
+            removed += 1
+        elif scope:
             conn.execute("DELETE FROM guests WHERE id = ?", (old["id"],))
             removed += 1
 
@@ -419,7 +444,9 @@ def replace_guests_from_rows(rows: list[dict]) -> int:
     return sync_guests_from_rows(rows)["total"]
 
 
-def read_guests_from_excel(file_storage) -> list[dict]:
+def read_guests_from_excel(
+    file_storage, default_category: str | None = None
+) -> list[dict]:
     from openpyxl import load_workbook
 
     wb = load_workbook(file_storage, read_only=True, data_only=True)
@@ -435,7 +462,16 @@ def read_guests_from_excel(file_storage) -> list[dict]:
         "first_name": {"first name", "firstname", "first"},
         "last_name": {"last name", "lastname", "last", "surname"},
         "email": {"email", "email id", "mail"},
-        "phone": {"phone", "mobile", "contact", "phone number", "mobile number"},
+        "phone": {
+            "phone",
+            "mobile",
+            "contact",
+            "phone number",
+            "mobile number",
+            "mob",
+            "mobile no",
+            "mobile no.",
+        },
         "specialty": {"specialty", "speciality", "field", "department"},
         "city": {"city", "place", "location"},
         "designation": {
@@ -447,6 +483,7 @@ def read_guests_from_excel(file_storage) -> list[dict]:
             "badge",
         },
         "meal": {"meal", "meal preference", "preference", "food"},
+        "sr_no": {"sr no", "sr. no", "srno", "s.no", "serial", "serial no", "no"},
     }
 
     def find_col(keys: set[str]) -> int | None:
@@ -460,16 +497,23 @@ def read_guests_from_excel(file_storage) -> list[dict]:
     has_split_name = idx["first_name"] is not None or idx["last_name"] is not None
     if idx["phone"] is None or (not has_full_name and not has_split_name):
         raise RuntimeError(
-            "Excel must have Name (or First Name + Last Name) and Phone columns. "
-            "Email is optional (needed only if you email the PDF)."
+            "Excel must have NAME and MOBILE NUMBER columns "
+            "(optional: CITY, CATEGORY / or pick category in the form)."
         )
 
     def cell(row, key: str, default: str = "") -> str:
         i = idx[key]
         if i is None:
             return default
-        return str(row[i] or "").strip() or default
+        raw = row[i]
+        if raw is None:
+            return default
+        # Keep mobile numbers as digits (Excel may store as float)
+        if key == "phone" and isinstance(raw, (int, float)):
+            return str(int(raw))
+        return str(raw).strip() or default
 
+    fallback_cat = normalize_category(default_category or "Delegate")
     guests: list[dict] = []
     for row in rows_iter:
         if not row:
@@ -489,6 +533,7 @@ def read_guests_from_excel(file_storage) -> list[dict]:
             continue
         if email and "@" not in email:
             email = ""
+        cat_cell = cell(row, "designation")
         guests.append(
             {
                 "name": name,
@@ -496,7 +541,7 @@ def read_guests_from_excel(file_storage) -> list[dict]:
                 "phone": phone,
                 "specialty": cell(row, "specialty"),
                 "city": cell(row, "city"),
-                "designation": normalize_category(cell(row, "designation", "Delegate")),
+                "designation": normalize_category(cat_cell) if cat_cell else fallback_cat,
                 "meal": cell(row, "meal", "Vegetarian"),
                 "table_no": "",
             }
@@ -504,7 +549,7 @@ def read_guests_from_excel(file_storage) -> list[dict]:
     wb.close()
     if not guests:
         raise RuntimeError(
-            "No valid guest rows found. Each row needs a name and phone number."
+            "No valid guest rows found. Each row needs NAME and MOBILE NUMBER."
         )
     if len(guests) > 2000:
         raise RuntimeError("Too many rows (max 2000). Split the file.")
@@ -552,6 +597,11 @@ def get_guest_by_id(guest_id: int) -> sqlite3.Row | None:
     return guest
 
 
+def guest_badge_id(token: str) -> str:
+    """Printed badge ID — first 8 chars of token (e.g. A1B2C3D4)."""
+    return ((token or "")[:8] or "GUEST").upper()
+
+
 def resolve_guest_code(raw: str) -> sqlite3.Row | None:
     """Resolve full token, check-in URL, or short badge ID (first 8 of token)."""
     value = (raw or "").strip()
@@ -563,6 +613,8 @@ def resolve_guest_code(raw: str) -> sqlite3.Row | None:
         return get_guest_by_token(match.group(1).lower())
 
     code = value.replace(" ", "").lower()
+    if code.startswith("ngpa_"):
+        code = code[5:]
     if re.fullmatch(r"[a-f0-9]{32}", code):
         return get_guest_by_token(code)
 
@@ -628,6 +680,7 @@ def _draw_qr_on_pdf(pdf: canvas.Canvas, data: str, x: float, y: float, size: flo
     for row_i, row in enumerate(matrix):
         for col_i, dark in enumerate(row):
             if dark:
+                # Matrix row 0 is top; PDF y grows upward
                 pdf.rect(
                     x + col_i * cell,
                     y + (n - 1 - row_i) * cell,
@@ -694,7 +747,7 @@ def build_ticket_pdf(guest: sqlite3.Row) -> io.BytesIO:
 
     name = _guest_field(guest, "name").upper()
     city = _guest_field(guest, "city").upper()
-    code = (_guest_field(guest, "token")[:8] or "GUEST").upper()
+    code = guest_badge_id(_guest_field(guest, "token"))
 
     # Centered in the middle blank area (same placement as earlier badges)
     center_x = badge_w / 2
@@ -724,7 +777,7 @@ def build_ticket_pdf(guest: sqlite3.Row) -> io.BytesIO:
 
     pdf.setFillColorRGB(*ink)
     pdf.setFont("Helvetica-Bold", 8)
-    pdf.drawCentredString(center_x, qr_y - 6 * mm, code)
+    pdf.drawCentredString(center_x, qr_y - 2 * mm, code)
 
     pdf.showPage()
     pdf.save()
@@ -1076,11 +1129,18 @@ def upload_excel():
     if not file.filename.lower().endswith(".xlsx"):
         flash("Only .xlsx files are supported.", "bad")
         return redirect(url_for("home"))
+    category = normalize_category(request.form.get("import_category") or "Delegate")
+    replace_all = request.form.get("replace_all") == "1"
     try:
-        rows = read_guests_from_excel(file)
-        stats = sync_guests_from_rows(rows)
+        rows = read_guests_from_excel(file, default_category=category)
+        stats = sync_guests_from_rows(
+            rows,
+            replace_all=replace_all,
+            category_scope=None if replace_all else category,
+        )
+        mode = "replaced all" if replace_all else f"merged into {category}"
         flash(
-            f"Imported {stats['total']} guest(s): "
+            f"Imported {stats['total']} guest(s) ({mode}): "
             f"{stats['kept']} kept same QR/ID, "
             f"{stats['created']} new, "
             f"{stats['removed']} removed.",
@@ -1088,6 +1148,99 @@ def upload_excel():
         )
     except Exception as exc:  # noqa: BLE001
         flash(f"Excel upload failed: {exc}", "bad")
+    return redirect(url_for("home"))
+
+
+@app.route("/clear-guests", methods=["POST"])
+@admin_required
+def clear_guests():
+    scope = (request.form.get("clear_category") or "").strip()
+    conn = get_db()
+    if scope and scope.lower() != "all":
+        cat = normalize_category(scope)
+        count = conn.execute(
+            "SELECT COUNT(*) AS c FROM guests WHERE designation = ?",
+            (cat,),
+        ).fetchone()["c"]
+        conn.execute("DELETE FROM guests WHERE designation = ?", (cat,))
+        conn.commit()
+        conn.close()
+        flash(f"Cleared {count} {cat} guest(s). Other categories kept.", "ok")
+    else:
+        count = conn.execute("SELECT COUNT(*) AS c FROM guests").fetchone()["c"]
+        conn.execute("DELETE FROM guests")
+        conn.commit()
+        conn.close()
+        flash(f"Cleared {count} guest(s) (all categories).", "ok")
+    return redirect(url_for("home"))
+
+
+def build_sample_guest_rows(total: int = 500) -> list[dict]:
+    """Build a demo guest list spread across all categories."""
+    first_names = [
+        "AARAV", "VIVAAN", "ADITYA", "VIHAAN", "ARJUN", "SAI", "REYANSH", "AYAAN",
+        "KRISHNA", "ISHAN", "ANANYA", "AADHYA", "DIYA", "MYRA", "SARA", "ANIKA",
+        "IRA", "PARI", "NAVYA", "KIARA", "ROHAN", "KARAN", "DEV", "YASH", "OM",
+        "NEHA", "POOJA", "MEERA", "ISHA", "RIYA", "HARSH", "JAY", "RAJ", "VEER",
+        "KAVYA", "NISHA", "TANVI", "SHRUTI", "PRIYA", "SNEHA",
+    ]
+    last_names = [
+        "PATEL", "SHAH", "MEHTA", "JOSHI", "DESAI", "TRIVEDI", "DAVE", "AMIN",
+        "PARIKH", "THAKKAR", "CHAUHAN", "RATHOD", "SOLANKI", "GANDHI", "MODI",
+        "NAIR", "VERMA", "SHARMA", "GUPTA", "KAPOOR", "BHAVSAR", "PANDYA",
+    ]
+    cities = [
+        "MEHSANA", "AHMEDABAD", "SURAT", "RAJKOT", "VADODARA", "GANDHINAGAR",
+        "BHAVNAGAR", "JAMNAGAR", "JUNAGADH", "ANAND", "NADIAD", "PATAN",
+        "PALANPUR", "HIMMATNAGAR", "MODASA", "UNJHA", "VISNAGAR", "KALOL",
+    ]
+    # Spread ~500 across 5 categories
+    per = {
+        "Delegate": 150,
+        "Faculty": 100,
+        "Organizer": 80,
+        "Pharma": 80,
+        "Guest": 90,
+    }
+    assert sum(per.values()) == total
+
+    rows: list[dict] = []
+    n = 1
+    for cat, count in per.items():
+        for i in range(count):
+            fname = first_names[(n + i) % len(first_names)]
+            lname = last_names[(n * 3 + i) % len(last_names)]
+            phone = f"{9000000000 + n}"
+            rows.append(
+                {
+                    "name": f"DR. {fname} {lname}",
+                    "email": "",
+                    "phone": phone,
+                    "specialty": "",
+                    "city": cities[(n + i) % len(cities)],
+                    "designation": cat,
+                    "meal": "Vegetarian",
+                    "table_no": "",
+                }
+            )
+            n += 1
+    return rows
+
+
+@app.route("/load-sample-500", methods=["POST"])
+@admin_required
+def load_sample_500():
+    """Replace DB with ~500 demo guests across all categories (load test)."""
+    try:
+        rows = build_sample_guest_rows(500)
+        stats = sync_guests_from_rows(rows, replace_all=True)
+        flash(
+            f"Loaded {stats['total']} sample guests across all categories "
+            f"(Delegate 150, Faculty 100, Organizer 80, Pharma 80, Guest 90).",
+            "ok",
+        )
+    except Exception as exc:  # noqa: BLE001
+        flash(f"Sample load failed: {exc}", "bad")
     return redirect(url_for("home"))
 
 

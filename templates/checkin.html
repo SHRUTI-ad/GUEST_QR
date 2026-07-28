@@ -52,9 +52,8 @@
       </div>
 
       <dl class="meta">
-        <dt>Specialty</dt><dd>{{ guest.specialty or '—' }}</dd>
         <dt>City</dt><dd>{{ guest.city or '—' }}</dd>
-        <dt>Food</dt><dd>{{ guest.meal or '—' }}</dd>
+        <dt>Mobile</dt><dd>{{ guest.phone or '—' }}</dd>
         <dt>Lunch</dt>
         <dd>{% if guest.lunch_claimed %}Claimed{% if guest.claimed_at %} · {{ guest.claimed_at }}{% endif %}{% else %}Not claimed{% endif %}</dd>
         <dt>Dinner</dt>
