@@ -775,9 +775,11 @@ def build_ticket_pdf(guest: sqlite3.Row) -> io.BytesIO:
 
     _draw_qr_on_pdf(pdf, guest_qr_url(guest["token"]), qr_x, qr_y, qr_size)
 
+    # Gap QR bottom → ID top ≈ 1.6mm (matches approved preview); baseline below QR
+    qr_id_gap = 3.6 * mm
     pdf.setFillColorRGB(*ink)
     pdf.setFont("Helvetica-Bold", 8)
-    pdf.drawCentredString(center_x, qr_y - 2 * mm, code)
+    pdf.drawCentredString(center_x, qr_y - qr_id_gap, code)
 
     pdf.showPage()
     pdf.save()
