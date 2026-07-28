@@ -594,10 +594,48 @@ def guest_qr_url(token: str) -> str:
 
 
 def make_qr_image(data: str):
-    qr = qrcode.QRCode(version=1, box_size=8, border=2)
+    """Black QR modules on a transparent background (PNG RGBA)."""
+    qr = qrcode.QRCode(version=1, box_size=8, border=1)
     qr.add_data(data)
     qr.make(fit=True)
-    return qr.make_image(fill_color="black", back_color="white")
+    matrix = qr.get_matrix()
+    scale = 8
+    size = len(matrix) * scale
+    from PIL import Image as PILImage
+
+    img = PILImage.new("RGBA", (size, size), (0, 0, 0, 0))
+    pixels = img.load()
+    for y, row in enumerate(matrix):
+        for x, dark in enumerate(row):
+            if not dark:
+                continue
+            x0, y0 = x * scale, y * scale
+            for dy in range(scale):
+                for dx in range(scale):
+                    pixels[x0 + dx, y0 + dy] = (0, 0, 0, 255)
+    return img
+
+
+def _draw_qr_on_pdf(pdf: canvas.Canvas, data: str, x: float, y: float, size: float) -> None:
+    """Draw QR as black modules only — no white fill (badge art shows through)."""
+    qr = qrcode.QRCode(version=1, box_size=1, border=1)
+    qr.add_data(data)
+    qr.make(fit=True)
+    matrix = qr.get_matrix()
+    n = len(matrix)
+    cell = size / n
+    pdf.setFillColorRGB(0, 0, 0)
+    for row_i, row in enumerate(matrix):
+        for col_i, dark in enumerate(row):
+            if dark:
+                pdf.rect(
+                    x + col_i * cell,
+                    y + (n - 1 - row_i) * cell,
+                    cell + 0.1,
+                    cell + 0.1,
+                    fill=1,
+                    stroke=0,
+                )
 
 
 def _guest_field(guest: sqlite3.Row, key: str, default: str = "") -> str:
@@ -658,10 +696,13 @@ def build_ticket_pdf(guest: sqlite3.Row) -> io.BytesIO:
     city = _guest_field(guest, "city").upper()
     code = (_guest_field(guest, "token")[:8] or "GUEST").upper()
 
-    # Middle blank band on template (keep clear of header + footer art)
+    # Centered in the middle blank area (same placement as earlier badges)
     center_x = badge_w / 2
-    name_y = badge_h - 58 * mm
-    city_y = badge_h - 66 * mm
+    name_y = badge_h - 68 * mm
+    city_y = badge_h - 76 * mm
+    qr_size = 34 * mm
+    qr_y = 46 * mm
+    qr_x = (badge_w - qr_size) / 2
 
     pdf.setFillColorRGB(*ink)
     pdf.setFont("Helvetica-Bold", 13)
@@ -673,38 +714,13 @@ def build_ticket_pdf(guest: sqlite3.Row) -> io.BytesIO:
         pdf.drawCentredString(
             center_x, name_y - 2.5 * mm, name[max_chars : max_chars * 2]
         )
-        city_y = badge_h - 70 * mm
+        city_y = badge_h - 80 * mm
 
     if city:
         pdf.setFont("Helvetica", 10)
         pdf.drawCentredString(center_x, city_y, city)
 
-    qr_size = 34 * mm
-    qr_y = 40 * mm
-    qr_x = (badge_w - qr_size) / 2
-    qr_img = make_qr_image(guest_qr_url(guest["token"]))
-    qr_buffer = io.BytesIO()
-    qr_img.save(qr_buffer, format="PNG")
-    qr_buffer.seek(0)
-    pad = 2.2 * mm
-    pdf.setFillColorRGB(1, 1, 1)
-    pdf.roundRect(
-        qr_x - pad,
-        qr_y - pad,
-        qr_size + 2 * pad,
-        qr_size + 2 * pad,
-        2 * mm,
-        fill=1,
-        stroke=0,
-    )
-    pdf.drawImage(
-        ImageReader(qr_buffer),
-        qr_x,
-        qr_y,
-        width=qr_size,
-        height=qr_size,
-        mask="auto",
-    )
+    _draw_qr_on_pdf(pdf, guest_qr_url(guest["token"]), qr_x, qr_y, qr_size)
 
     pdf.setFillColorRGB(*ink)
     pdf.setFont("Helvetica-Bold", 8)
