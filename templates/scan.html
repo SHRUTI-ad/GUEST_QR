@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Find guest · {{ event_name }}{% endblock %}
+{% block title %}Scan · {{ event_name }}{% endblock %}
 {% block body_class %}theme-all{% endblock %}
 {% block content %}
   <header class="app-header">
     <div>
       <p class="brand">Check-in helper</p>
-      <h1>Find guest</h1>
-      <p class="sub">Enter the badge ID, scan the QR, or paste the check-in link.</p>
+      <h1>Scan guest QR</h1>
+      <p class="sub">Use the phone camera here — no need to switch to Google Lens.</p>
     </div>
     <nav class="app-nav">
       <a class="btn secondary" href="{{ url_for('home') }}">Guest list</a>
@@ -14,28 +14,138 @@
   </header>
 
   <div class="panel">
-    <h2 class="panel-title">Quick steps</h2>
-    <p class="help">1. Stay logged in on this phone</p>
-    <p class="help">2. Type the 8-character ID from the badge (e.g. 9168B65B), or scan the QR</p>
-    <p class="help">3. Mark lunch or dinner on the guest page</p>
+    <h2 class="panel-title">Camera scan</h2>
+    <p class="help" id="scan-status">Tap Start camera, then point at the badge QR.</p>
+    <div id="qr-reader" class="qr-reader"></div>
+    <div class="scan-actions">
+      <button type="button" class="btn btn-block" id="start-scan-btn">Start camera</button>
+      <button type="button" class="btn btn-block secondary" id="stop-scan-btn" hidden>Stop camera</button>
+    </div>
+    <p class="help" style="margin-top: 0.75rem;">
+      Camera needs HTTPS (or localhost) and permission. Prefer the rear camera.
+    </p>
   </div>
 
   <div class="panel">
-    <h2 class="panel-title">Badge ID / QR link</h2>
-    <form class="form-row" method="post" action="{{ url_for('scan') }}">
+    <h2 class="panel-title">Or type badge ID</h2>
+    <form class="form-row" method="post" action="{{ url_for('scan') }}" id="manual-scan-form">
       <input
         name="code"
+        id="manual-code"
         type="text"
         placeholder="e.g. 9168B65B or paste QR link"
         autocomplete="off"
         autocapitalize="characters"
-        autofocus
-        required
       />
       <button class="btn btn-block" type="submit">Open guest</button>
     </form>
-    <p class="help" style="margin-top: 0.75rem;">
-      The short ID under the name on the PDF is enough — you do not need the full QR link.
-    </p>
   </div>
+
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script>
+    (function () {
+      const readerId = "qr-reader";
+      const statusEl = document.getElementById("scan-status");
+      const startBtn = document.getElementById("start-scan-btn");
+      const stopBtn = document.getElementById("stop-scan-btn");
+      const manualInput = document.getElementById("manual-code");
+      const manualForm = document.getElementById("manual-scan-form");
+      let scanner = null;
+      let handling = false;
+
+      function setStatus(msg) {
+        if (statusEl) statusEl.textContent = msg;
+      }
+
+      function openScannedValue(text) {
+        const raw = (text || "").trim();
+        if (!raw || handling) return;
+        handling = true;
+        setStatus("QR found — opening guest…");
+
+        const match = raw.match(/\/checkin\/([a-fA-F0-9]{32})/i);
+        const go = function () {
+          if (match) {
+            window.location.href = "/checkin/" + match[1].toLowerCase();
+            return;
+          }
+          if (/^[a-fA-F0-9]{32}$/.test(raw)) {
+            window.location.href = "/checkin/" + raw.toLowerCase();
+            return;
+          }
+          manualInput.value = raw;
+          manualForm.submit();
+        };
+
+        if (scanner) {
+          scanner.stop().then(go).catch(go);
+        } else {
+          go();
+        }
+      }
+
+      function startScanner() {
+        if (!window.Html5Qrcode) {
+          setStatus("Scanner library failed to load. Use badge ID below.");
+          return;
+        }
+        if (!window.isSecureContext) {
+          setStatus("Camera needs HTTPS. Open the site on https://… or use badge ID below.");
+          return;
+        }
+        handling = false;
+        if (!scanner) scanner = new Html5Qrcode(readerId);
+        const config = {
+          fps: 10,
+          qrbox: function (viewW, viewH) {
+            const edge = Math.min(280, Math.floor(Math.min(viewW, viewH) * 0.75));
+            return { width: edge, height: edge };
+          },
+          aspectRatio: 1,
+        };
+        setStatus("Starting camera…");
+        scanner
+          .start(
+            { facingMode: "environment" },
+            config,
+            function (decodedText) { openScannedValue(decodedText); },
+            function () { /* ignore frame miss */ }
+          )
+          .then(function () {
+            startBtn.hidden = true;
+            stopBtn.hidden = false;
+            setStatus("Point the camera at the badge QR.");
+          })
+          .catch(function (err) {
+            setStatus(
+              "Could not open camera (" + (err && err.message ? err.message : "permission denied") + "). " +
+              "Allow camera access, or type the badge ID below."
+            );
+            startBtn.hidden = false;
+            stopBtn.hidden = true;
+          });
+      }
+
+      function stopScanner() {
+        if (!scanner) return;
+        scanner
+          .stop()
+          .then(function () {
+            startBtn.hidden = false;
+            stopBtn.hidden = true;
+            setStatus("Camera stopped. Tap Start camera to scan again.");
+          })
+          .catch(function () {
+            startBtn.hidden = false;
+            stopBtn.hidden = true;
+          });
+      }
+
+      startBtn.addEventListener("click", startScanner);
+      stopBtn.addEventListener("click", stopScanner);
+      window.addEventListener("pagehide", function () {
+        if (scanner) scanner.stop().catch(function () {});
+      });
+    })();
+  </script>
 {% endblock %}

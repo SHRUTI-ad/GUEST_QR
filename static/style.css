@@ -483,6 +483,25 @@ select:focus {
   margin: 0;
 }
 
+.qr-reader {
+  width: 100%;
+  max-width: 420px;
+  margin: 0.75rem auto 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #0f172a;
+}
+
+.qr-reader video {
+  border-radius: 12px !important;
+}
+
+.scan-actions {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.85rem;
+}
+
 .status-banner {
   border-radius: 12px;
   padding: 0.85rem 1rem;
