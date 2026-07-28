@@ -4,12 +4,13 @@
 {% block theme_color %}
   {%- if guest -%}
     {%- set cat = normalize_category(guest.designation) -%}
-    {%- if cat == 'Faculty' -%}#1d4ed8
-    {%- elif cat == 'Organizer' -%}#c2410c
-    {%- elif cat == 'Pharma' -%}#6d28d9
-    {%- else -%}#0f6e56
+    {%- if cat == 'Faculty' -%}#b91c1c
+    {%- elif cat == 'Organizer' -%}#ea580c
+    {%- elif cat == 'Pharma' -%}#15803d
+    {%- elif cat == 'Guest' -%}#7e22ce
+    {%- else -%}#1e3a8a
     {%- endif -%}
-  {%- else -%}#0f6e56
+  {%- else -%}#1e3a8a
   {%- endif -%}
 {% endblock %}
 {% block content %}

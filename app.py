@@ -60,22 +60,30 @@ STAFF_USERNAME = os.environ.get("STAFF_USERNAME", "staff")
 STAFF_PASSWORD = os.environ.get("STAFF_PASSWORD", "event123")
 STAFF_PASSWORD_HASH = generate_password_hash(STAFF_PASSWORD)
 
-EVENT_NAME = "Conference Lunch Meetup"
-EVENT_DATE = "Saturday, 25 July 2026 · 12:30 PM"
-EVENT_VENUE = "Main Hall, City Convention Center"
+EVENT_NAME = "NGPA 2026 Annual Conference"
+EVENT_DATE = "8 & 9 August 2026 · Saturday & Sunday"
+EVENT_VENUE = "North Gujarat Physician Association"
 
 # Public base URL embedded inside QR codes (must be reachable by staff phones).
 # Example: http://10.197.190.212:5050
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 
-# Guest categories (badge color). "Delicate" typo maps to Delegate.
-CATEGORIES = ("Delegate", "Faculty", "Organizer", "Pharma")
+# Guest categories — badge background art in static/badges/
+CATEGORIES = ("Delegate", "Faculty", "Organizer", "Pharma", "Guest")
 CATEGORY_COLORS = {
-    # RGB 0-1 for PDF + CSS class key
-    "Delegate": {"rgb": (0.06, 0.43, 0.34), "css": "cat-delegate"},
-    "Faculty": {"rgb": (0.11, 0.31, 0.75), "css": "cat-faculty"},
-    "Organizer": {"rgb": (0.71, 0.33, 0.04), "css": "cat-organizer"},
-    "Pharma": {"rgb": (0.43, 0.16, 0.75), "css": "cat-pharma"},
+    # RGB 0-1 for UI accents (matches badge footer colors)
+    "Delegate": {"rgb": (0.10, 0.25, 0.55), "css": "cat-delegate"},  # blue
+    "Faculty": {"rgb": (0.75, 0.12, 0.14), "css": "cat-faculty"},  # red
+    "Organizer": {"rgb": (0.90, 0.45, 0.08), "css": "cat-organizer"},  # orange
+    "Pharma": {"rgb": (0.15, 0.55, 0.28), "css": "cat-pharma"},  # green
+    "Guest": {"rgb": (0.45, 0.18, 0.65), "css": "cat-guest"},  # purple
+}
+CATEGORY_BADGE_BG = {
+    "Delegate": "delegate.png",
+    "Faculty": "faculty.png",
+    "Organizer": "organizer.png",
+    "Pharma": "pharma.png",
+    "Guest": "guest.png",
 }
 CATEGORY_ALIASES = {
     "delegate": "Delegate",
@@ -83,8 +91,10 @@ CATEGORY_ALIASES = {
     "faculty": "Faculty",
     "organizer": "Organizer",
     "organiser": "Organizer",
+    "origanizer": "Organizer",  # typo
     "pharma": "Pharma",
     "pharmaceutical": "Pharma",
+    "guest": "Guest",
 }
 
 
@@ -606,71 +616,87 @@ def category_style(guest: sqlite3.Row | dict) -> dict:
     return {"name": cat, **CATEGORY_COLORS[cat]}
 
 
+def _badge_background_path(category: str) -> Path | None:
+    filename = CATEGORY_BADGE_BG.get(category) or CATEGORY_BADGE_BG["Delegate"]
+    path = BASE_DIR / "static" / "badges" / filename
+    return path if path.exists() else None
+
+
 def build_ticket_pdf(guest: sqlite3.Row) -> io.BytesIO:
-    """Badge-style PDF: name, specialty, city, category color + one shared QR."""
-    badge_w, badge_h = 105 * mm, 160 * mm
+    """NGPA badge PDF: category background + name, city, QR in the blank middle."""
+    # Matches provided artwork aspect (~670×1024)
+    badge_w, badge_h = 105 * mm, 160.5 * mm
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=(badge_w, badge_h))
 
     style = category_style(guest)
     accent = style["rgb"]
-    accent_dark = tuple(max(0.0, c - 0.12) for c in accent)
-    ink = (0.12, 0.10, 0.16)
+    ink = (0.12, 0.12, 0.16)
 
-    # Background
-    pdf.setFillColorRGB(1, 1, 1)
-    pdf.rect(0, 0, badge_w, badge_h, fill=1, stroke=0)
+    bg_path = _badge_background_path(style["name"])
+    if bg_path:
+        pdf.drawImage(
+            str(bg_path),
+            0,
+            0,
+            width=badge_w,
+            height=badge_h,
+            preserveAspectRatio=True,
+            anchor="c",
+            mask="auto",
+        )
+    else:
+        pdf.setFillColorRGB(1, 1, 1)
+        pdf.rect(0, 0, badge_w, badge_h, fill=1, stroke=0)
+        pdf.setFillColorRGB(*accent)
+        pdf.rect(0, 0, badge_w, 18 * mm, fill=1, stroke=0)
+        pdf.setFillColorRGB(1, 1, 1)
+        pdf.setFont("Helvetica-Bold", 11)
+        pdf.drawCentredString(badge_w / 2, 6.5 * mm, style["name"].upper())
 
-    # Header band (category color)
-    pdf.setFillColorRGB(*accent)
-    pdf.rect(0, badge_h - 38 * mm, badge_w, 38 * mm, fill=1, stroke=0)
-
-    pdf.setFillColorRGB(1, 1, 1)
-    pdf.setFont("Helvetica-Bold", 11)
-    pdf.drawCentredString(badge_w / 2, badge_h - 14 * mm, EVENT_NAME)
-    pdf.setFont("Helvetica", 7.5)
-    pdf.drawCentredString(badge_w / 2, badge_h - 21 * mm, EVENT_VENUE)
-    pdf.drawCentredString(badge_w / 2, badge_h - 28 * mm, EVENT_DATE)
-
-    # Guest details (no table number)
     name = _guest_field(guest, "name").upper()
-    specialty = _guest_field(guest, "specialty").upper()
     city = _guest_field(guest, "city").upper()
-    designation = style["name"].upper()
     code = (_guest_field(guest, "token")[:8] or "GUEST").upper()
 
+    # Middle blank band on template (keep clear of header + footer art)
+    center_x = badge_w / 2
+    name_y = badge_h - 58 * mm
+    city_y = badge_h - 66 * mm
+
     pdf.setFillColorRGB(*ink)
-    pdf.setFont("Helvetica-Bold", 14)
-    # Wrap long names
-    max_chars = 22
+    pdf.setFont("Helvetica-Bold", 13)
+    max_chars = 24
     if len(name) <= max_chars:
-        pdf.drawCentredString(badge_w / 2, badge_h - 52 * mm, name)
-        detail_y = badge_h - 62 * mm
+        pdf.drawCentredString(center_x, name_y, name)
     else:
-        pdf.drawCentredString(badge_w / 2, badge_h - 50 * mm, name[:max_chars])
-        pdf.drawCentredString(badge_w / 2, badge_h - 57 * mm, name[max_chars: max_chars * 2])
-        detail_y = badge_h - 67 * mm
+        pdf.drawCentredString(center_x, name_y + 3.5 * mm, name[:max_chars])
+        pdf.drawCentredString(
+            center_x, name_y - 2.5 * mm, name[max_chars : max_chars * 2]
+        )
+        city_y = badge_h - 70 * mm
 
-    pdf.setFont("Helvetica", 9)
-    if specialty:
-        pdf.drawCentredString(badge_w / 2, detail_y, specialty)
-        detail_y -= 6 * mm
     if city:
-        pdf.drawCentredString(badge_w / 2, detail_y, city)
-        detail_y -= 7 * mm
+        pdf.setFont("Helvetica", 10)
+        pdf.drawCentredString(center_x, city_y, city)
 
-    # One shared guest ID + QR (works for lunch and dinner)
-    pdf.setFillColorRGB(*accent)
-    pdf.setFont("Helvetica-Bold", 9)
-    pdf.drawCentredString(badge_w / 2, detail_y, code)
-
-    qr_size = 42 * mm
-    qr_y = 28 * mm
+    qr_size = 34 * mm
+    qr_y = 40 * mm
     qr_x = (badge_w - qr_size) / 2
     qr_img = make_qr_image(guest_qr_url(guest["token"]))
     qr_buffer = io.BytesIO()
     qr_img.save(qr_buffer, format="PNG")
     qr_buffer.seek(0)
+    pad = 2.2 * mm
+    pdf.setFillColorRGB(1, 1, 1)
+    pdf.roundRect(
+        qr_x - pad,
+        qr_y - pad,
+        qr_size + 2 * pad,
+        qr_size + 2 * pad,
+        2 * mm,
+        fill=1,
+        stroke=0,
+    )
     pdf.drawImage(
         ImageReader(qr_buffer),
         qr_x,
@@ -679,16 +705,10 @@ def build_ticket_pdf(guest: sqlite3.Row) -> io.BytesIO:
         height=qr_size,
         mask="auto",
     )
-    pdf.setFillColorRGB(*accent_dark)
-    pdf.setFont("Helvetica", 7)
-    pdf.drawCentredString(badge_w / 2, qr_y - 5 * mm, "Scan for lunch & dinner")
 
-    # Footer band with category
-    pdf.setFillColorRGB(*accent_dark)
-    pdf.rect(0, 0, badge_w, 16 * mm, fill=1, stroke=0)
-    pdf.setFillColorRGB(1, 1, 1)
-    pdf.setFont("Helvetica-Bold", 9)
-    pdf.drawCentredString(badge_w / 2, 6 * mm, designation)
+    pdf.setFillColorRGB(*ink)
+    pdf.setFont("Helvetica-Bold", 8)
+    pdf.drawCentredString(center_x, qr_y - 6 * mm, code)
 
     pdf.showPage()
     pdf.save()
