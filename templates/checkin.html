@@ -27,7 +27,7 @@
   </header>
 
   {% if status == "invalid" or not guest %}
-    <div class="status-banner invalid">Unknown QR — guest not on the list.</div>
+    <div class="status-banner invalid">Invalid QR — this guest is not registered.</div>
     <a class="btn btn-block scan-next-btn" href="{{ url_for('scan', auto=1) }}" style="margin-top: 0.85rem;">
       Scan next guest
     </a>

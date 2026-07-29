@@ -227,13 +227,18 @@ SAMPLE_GUESTS = [
     },
 ]
 
-SAMPLE_XLSX = BASE_DIR / "guests_500_sample.xlsx"
+SAMPLE_XLSX = BASE_DIR / "DELEGATES.xlsx"
 if not SAMPLE_XLSX.exists():
     SAMPLE_XLSX = BASE_DIR / "guests_categories_sample.xlsx"
 if not SAMPLE_XLSX.exists():
-    SAMPLE_XLSX = BASE_DIR / "guests_badge_sample.xlsx"
-if not SAMPLE_XLSX.exists():
     SAMPLE_XLSX = BASE_DIR / "guests_sample.xlsx"
+
+# Fixed event guest lists (category Excel files in project folder)
+FIXED_GUEST_EXCELS = (
+    (BASE_DIR / "DELEGATES.xlsx", "Delegate"),
+    (BASE_DIR / "PHARMA.xlsx", "Pharma"),
+    (BASE_DIR / "ORGANISER.xlsx", "Organizer"),
+)
 
 
 def get_db() -> sqlite3.Connection:
@@ -281,9 +286,6 @@ def init_db() -> None:
     _ensure_column(conn, "guests", "city", "TEXT DEFAULT ''")
     _ensure_column(conn, "guests", "designation", "TEXT DEFAULT ''")
 
-    count = conn.execute("SELECT COUNT(*) AS c FROM guests").fetchone()["c"]
-    if count == 0:
-        _insert_sample_guests(conn)
     conn.commit()
     conn.close()
 
@@ -471,9 +473,11 @@ def read_guests_from_excel(
             "mob",
             "mobile no",
             "mobile no.",
+            "number",
+            "num",
         },
         "specialty": {"specialty", "speciality", "field", "department"},
-        "city": {"city", "place", "location"},
+        "city": {"city", "place", "location", "company"},
         "designation": {
             "designation",
             "role",
@@ -483,7 +487,16 @@ def read_guests_from_excel(
             "badge",
         },
         "meal": {"meal", "meal preference", "preference", "food"},
-        "sr_no": {"sr no", "sr. no", "srno", "s.no", "serial", "serial no", "no"},
+        "sr_no": {
+            "sr no",
+            "sr. no",
+            "sr.no",
+            "srno",
+            "s.no",
+            "serial",
+            "serial no",
+            "no",
+        },
     }
 
     def find_col(keys: set[str]) -> int | None:
@@ -1177,72 +1190,40 @@ def clear_guests():
     return redirect(url_for("home"))
 
 
-def build_sample_guest_rows(total: int = 500) -> list[dict]:
-    """Build a demo guest list spread across all categories."""
-    first_names = [
-        "AARAV", "VIVAAN", "ADITYA", "VIHAAN", "ARJUN", "SAI", "REYANSH", "AYAAN",
-        "KRISHNA", "ISHAN", "ANANYA", "AADHYA", "DIYA", "MYRA", "SARA", "ANIKA",
-        "IRA", "PARI", "NAVYA", "KIARA", "ROHAN", "KARAN", "DEV", "YASH", "OM",
-        "NEHA", "POOJA", "MEERA", "ISHA", "RIYA", "HARSH", "JAY", "RAJ", "VEER",
-        "KAVYA", "NISHA", "TANVI", "SHRUTI", "PRIYA", "SNEHA",
-    ]
-    last_names = [
-        "PATEL", "SHAH", "MEHTA", "JOSHI", "DESAI", "TRIVEDI", "DAVE", "AMIN",
-        "PARIKH", "THAKKAR", "CHAUHAN", "RATHOD", "SOLANKI", "GANDHI", "MODI",
-        "NAIR", "VERMA", "SHARMA", "GUPTA", "KAPOOR", "BHAVSAR", "PANDYA",
-    ]
-    cities = [
-        "MEHSANA", "AHMEDABAD", "SURAT", "RAJKOT", "VADODARA", "GANDHINAGAR",
-        "BHAVNAGAR", "JAMNAGAR", "JUNAGADH", "ANAND", "NADIAD", "PATAN",
-        "PALANPUR", "HIMMATNAGAR", "MODASA", "UNJHA", "VISNAGAR", "KALOL",
-    ]
-    # Spread ~500 across 5 categories
-    per = {
-        "Delegate": 150,
-        "Faculty": 100,
-        "Organizer": 80,
-        "Pharma": 80,
-        "Guest": 90,
-    }
-    assert sum(per.values()) == total
-
-    rows: list[dict] = []
-    n = 1
-    for cat, count in per.items():
-        for i in range(count):
-            fname = first_names[(n + i) % len(first_names)]
-            lname = last_names[(n * 3 + i) % len(last_names)]
-            phone = f"{9000000000 + n}"
-            rows.append(
-                {
-                    "name": f"DR. {fname} {lname}",
-                    "email": "",
-                    "phone": phone,
-                    "specialty": "",
-                    "city": cities[(n + i) % len(cities)],
-                    "designation": cat,
-                    "meal": "Vegetarian",
-                    "table_no": "",
-                }
-            )
-            n += 1
-    return rows
+def load_fixed_guest_excels(*, replace_all: bool = True) -> dict:
+    """Load DELEGATES / PHARMA / ORGANISER Excel files from the project folder."""
+    all_rows: list[dict] = []
+    loaded_files: list[str] = []
+    for path, category in FIXED_GUEST_EXCELS:
+        if not path.exists():
+            continue
+        rows = read_guests_from_excel(path, default_category=category)
+        all_rows.extend(rows)
+        loaded_files.append(f"{path.name} ({len(rows)} {category})")
+    if not all_rows:
+        raise RuntimeError(
+            "No fixed Excel files found. Add DELEGATES.xlsx, PHARMA.xlsx, "
+            "and/or ORGANISER.xlsx in the project folder."
+        )
+    stats = sync_guests_from_rows(all_rows, replace_all=replace_all)
+    stats["files"] = loaded_files
+    return stats
 
 
-@app.route("/load-sample-500", methods=["POST"])
+@app.route("/reload-fixed-excels", methods=["POST"])
 @admin_required
-def load_sample_500():
-    """Replace DB with ~500 demo guests across all categories (load test)."""
+def reload_fixed_excels():
+    """Re-import fixed category Excel files (keeps QR/ID for same name+phone)."""
     try:
-        rows = build_sample_guest_rows(500)
-        stats = sync_guests_from_rows(rows, replace_all=True)
+        stats = load_fixed_guest_excels(replace_all=True)
         flash(
-            f"Loaded {stats['total']} sample guests across all categories "
-            f"(Delegate 150, Faculty 100, Organizer 80, Pharma 80, Guest 90).",
+            f"Loaded {stats['total']} guest(s) from: "
+            + "; ".join(stats.get("files") or [])
+            + f". Kept same QR/ID: {stats['kept']}, new: {stats['created']}.",
             "ok",
         )
     except Exception as exc:  # noqa: BLE001
-        flash(f"Sample load failed: {exc}", "bad")
+        flash(f"Excel reload failed: {exc}", "bad")
     return redirect(url_for("home"))
 
 
@@ -1253,7 +1234,7 @@ def sample_excel():
         return send_file(
             SAMPLE_XLSX,
             as_attachment=True,
-            download_name="guests_sample.xlsx",
+            download_name=SAMPLE_XLSX.name,
         )
     flash("Sample Excel file is missing on the server.", "bad")
     return redirect(url_for("home"))
@@ -1450,8 +1431,7 @@ def scan():
         if guest:
             return redirect(url_for("checkin", token=guest["token"]))
         flash(
-            "No guest found for that ID. Use the 8-character code on the badge "
-            "(e.g. 9168B65B), or paste the full QR link.",
+            "Invalid QR / ID — this guest is not registered.",
             "error",
         )
         return redirect(url_for("scan"))
@@ -1465,6 +1445,15 @@ def health():
 
 # Runs for both `python app.py` and gunicorn (Render / production)
 init_db()
+try:
+    _conn = get_db()
+    _count = _conn.execute("SELECT COUNT(*) AS c FROM guests").fetchone()["c"]
+    _conn.close()
+    if _count == 0 and any(path.exists() for path, _cat in FIXED_GUEST_EXCELS):
+        with app.app_context():
+            load_fixed_guest_excels(replace_all=True)
+except Exception:
+    pass
 
 
 if __name__ == "__main__":

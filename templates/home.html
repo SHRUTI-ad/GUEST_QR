@@ -98,16 +98,16 @@
           Clear selected
         </button>
       </form>
-      <form method="post" action="{{ url_for('load_sample_500') }}" style="margin-top: 0.55rem;">
+      <form method="post" action="{{ url_for('reload_fixed_excels') }}" style="margin-top: 0.55rem;">
         <button type="submit" class="btn btn-sm"
-          onclick="return confirm('Replace the current list with 500 sample guests across all categories?');">
-          Load 500 sample guests
+          onclick="return confirm('Reload DELEGATES.xlsx + PHARMA.xlsx + ORGANISER.xlsx from the project folder?\n\nSame name + phone keeps the same QR/ID. Extra rows added at the end of Excel will be imported as new guests.');">
+          Reload event Excel files
         </button>
       </form>
       <p class="help" style="margin-top: 0.55rem;">
-        Excel columns: SR NO, NAME, CITY, MOBILE NUMBER (optional CATEGORY).
-        Sample file in project folder: <code>guests_500_sample.xlsx</code> — tick “Clear ALL” then Import.
-        Or use <strong>Load 500 sample guests</strong>. Clear can wipe one category or all.
+        Fixed lists: <code>DELEGATES.xlsx</code>, <code>PHARMA.xlsx</code>, <code>ORGANISER.xlsx</code>.
+        Add more rows at the end of those files, then Reload (or Import one category).
+        Faculty / Guest Excel can be added later.
       </p>
     </div>
   {% endif %}
