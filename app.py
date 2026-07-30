@@ -10,6 +10,7 @@ import re
 import smtplib
 import sqlite3
 import ssl
+import tempfile
 import urllib.error
 import urllib.request
 import uuid
@@ -743,32 +744,46 @@ def _badge_background_path(category: str) -> Path | None:
     return path if path.exists() else None
 
 
+# Render free tier ~30s request limit — keep each ZIP part small.
+ZIP_PART_SIZE = 30
+
+
 def _merge_vector_badge_background(
-    overlay_pdf: io.BytesIO, bg_pdf_path: Path, badge_w: float, badge_h: float
+    overlay_pdf: io.BytesIO,
+    bg_pdf_path: Path,
+    badge_w: float,
+    badge_h: float,
+    *,
+    bg_doc=None,
 ) -> io.BytesIO:
     """Place category PDF under the ReportLab overlay (vector, not rasterized)."""
     import fitz  # PyMuPDF
 
     out = fitz.open()
     page = out.new_page(width=badge_w, height=badge_h)
-    bg = fitz.open(bg_pdf_path)
+    owns_bg = bg_doc is None
+    bg = fitz.open(bg_pdf_path) if owns_bg else bg_doc
     try:
         page.show_pdf_page(page.rect, bg, 0)
+        overlay = fitz.open(stream=overlay_pdf.getvalue(), filetype="pdf")
+        try:
+            page.show_pdf_page(page.rect, overlay, 0)
+        finally:
+            overlay.close()
+        buffer = io.BytesIO(out.tobytes(deflate=True))
     finally:
-        bg.close()
-    overlay = fitz.open(stream=overlay_pdf.getvalue(), filetype="pdf")
-    try:
-        page.show_pdf_page(page.rect, overlay, 0)
-    finally:
-        overlay.close()
-    buffer = io.BytesIO(out.tobytes(deflate=True, garbage=3))
-    out.close()
+        out.close()
+        if owns_bg:
+            bg.close()
     buffer.seek(0)
     return buffer
 
 
-def build_ticket_pdf(guest: sqlite3.Row) -> io.BytesIO:
-    """NGPA badge PDF: category background + name, city, QR in the blank middle."""
+def build_ticket_pdf(guest: sqlite3.Row, bg_docs: dict | None = None) -> io.BytesIO:
+    """NGPA badge PDF: category background + name, city, QR in the blank middle.
+
+    Pass bg_docs={} during bulk ZIP builds to reuse opened category PDFs (much faster).
+    """
     # Matches provided artwork aspect (~670×1024)
     badge_w, badge_h = 105 * mm, 160.5 * mm
     style = category_style(guest)
@@ -844,7 +859,17 @@ def build_ticket_pdf(guest: sqlite3.Row) -> io.BytesIO:
 
     if bg_pdf_path:
         try:
-            return _merge_vector_badge_background(buffer, bg_pdf_path, badge_w, badge_h)
+            bg_doc = None
+            if bg_docs is not None:
+                import fitz  # PyMuPDF
+
+                key = str(bg_pdf_path)
+                if key not in bg_docs:
+                    bg_docs[key] = fitz.open(bg_pdf_path)
+                bg_doc = bg_docs[key]
+            return _merge_vector_badge_background(
+                buffer, bg_pdf_path, badge_w, badge_h, bg_doc=bg_doc
+            )
         except Exception:
             # PyMuPDF missing/failed → rebuild with PNG raster background
             bg_png_path = _badge_background_path(style["name"])
@@ -1188,6 +1213,7 @@ def home():
         category=category,
         status=status,
         category_counts=category_counts,
+        zip_part_size=ZIP_PART_SIZE,
     )
 
 
@@ -1348,11 +1374,21 @@ def pdf_ticket(token: str):
 @app.route("/download-pdfs-zip")
 @login_required
 def download_pdfs_zip():
-    """One-click ZIP of all badge PDFs (optional ?category=Delegate)."""
+    """ZIP badge PDFs in parts (optional ?category=Delegate&part=1).
+
+    Large lists are split so free-host timeouts do not kill Delegate/Pharma downloads.
+    """
+    from flask import after_this_request
+
     raw_cat = (request.args.get("category") or "").strip()
     category = normalize_category(raw_cat) if raw_cat else None
     if raw_cat and category not in CATEGORIES:
         category = None
+
+    try:
+        part = max(1, int(request.args.get("part") or 1))
+    except (TypeError, ValueError):
+        part = 1
 
     conn = get_db()
     if category:
@@ -1370,32 +1406,65 @@ def download_pdfs_zip():
         flash("No guests to download.", "bad")
         return redirect(url_for("home", category=category or None))
 
-    zip_buffer = io.BytesIO()
-    used_names: set[str] = set()
-    with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for guest in guests:
-            pdf_buffer = build_ticket_pdf(guest)
-            filename = _safe_pdf_filename(guest)
-            # Folder by category inside the zip for easier printing
-            cat = normalize_category(guest["designation"])
-            arcname = f"{cat}/{filename}"
-            if arcname in used_names:
-                stem = filename[:-4] if filename.lower().endswith(".pdf") else filename
-                arcname = f"{cat}/{stem}_{guest['id']}.pdf"
-            used_names.add(arcname)
-            zf.writestr(arcname, pdf_buffer.read())
+    total = len(guests)
+    parts = max(1, (total + ZIP_PART_SIZE - 1) // ZIP_PART_SIZE)
+    if part > parts:
+        flash(f"ZIP part {part} does not exist (only {parts} part(s)).", "bad")
+        return redirect(url_for("home", category=category or None))
 
-    zip_buffer.seek(0)
+    start = (part - 1) * ZIP_PART_SIZE
+    chunk = guests[start : start + ZIP_PART_SIZE]
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    tmp_path = tmp.name
+    tmp.close()
+    used_names: set[str] = set()
+    bg_docs: dict = {}
+    try:
+        # ZIP_STORED is faster; PDFs are already compressed.
+        with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_STORED) as zf:
+            for guest in chunk:
+                pdf_buffer = build_ticket_pdf(guest, bg_docs=bg_docs)
+                filename = _safe_pdf_filename(guest)
+                cat = normalize_category(guest["designation"])
+                arcname = f"{cat}/{filename}"
+                if arcname in used_names:
+                    stem = (
+                        filename[:-4]
+                        if filename.lower().endswith(".pdf")
+                        else filename
+                    )
+                    arcname = f"{cat}/{stem}_{guest['id']}.pdf"
+                used_names.add(arcname)
+                zf.writestr(arcname, pdf_buffer.read())
+    finally:
+        for doc in bg_docs.values():
+            try:
+                doc.close()
+            except Exception:  # noqa: BLE001
+                pass
+
     stamp = datetime.now().strftime("%Y%m%d_%H%M")
-    if category:
-        zip_name = f"NGPA_{category}_badges_{stamp}.zip"
+    scope = category or "all"
+    if parts > 1:
+        zip_name = f"NGPA_{scope}_badges_part{part}of{parts}_{stamp}.zip"
     else:
-        zip_name = f"NGPA_all_badges_{stamp}.zip"
+        zip_name = f"NGPA_{scope}_badges_{stamp}.zip"
+
+    @after_this_request
+    def _cleanup_zip(response):  # noqa: ANN001
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        return response
+
     return send_file(
-        zip_buffer,
+        tmp_path,
         mimetype="application/zip",
         as_attachment=True,
         download_name=zip_name,
+        max_age=0,
     )
 
 
