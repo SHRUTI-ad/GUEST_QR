@@ -86,7 +86,7 @@ CATEGORY_BADGE_PDF = {
     "Faculty": "FACULTY.pdf",
     "Organizer": "ORGANIZER.pdf",
     "Pharma": "PHARMA.pdf",
-    "Guest": "GUEST.pdf",
+    "Guest": "GUEST_2.pdf",
 }
 CATEGORY_BADGE_BG = {
     "Delegate": "delegate.png",
