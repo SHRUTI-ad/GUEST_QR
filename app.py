@@ -78,6 +78,14 @@ CATEGORY_COLORS = {
     "Pharma": {"rgb": (0.15, 0.55, 0.28), "css": "cat-pharma"},  # green
     "Guest": {"rgb": (0.45, 0.18, 0.65), "css": "cat-guest"},  # purple
 }
+# Prefer vector PDFs in category/ (sharp on phone). PNG under static/badges/ is fallback only.
+CATEGORY_BADGE_PDF = {
+    "Delegate": "DELEGATE.pdf",
+    "Faculty": "FACULTY.pdf",
+    "Organizer": "ORGANIZER.pdf",
+    "Pharma": "PHARMA.pdf",
+    "Guest": "GUEST.pdf",
+}
 CATEGORY_BADGE_BG = {
     "Delegate": "delegate.png",
     "Faculty": "faculty.png",
@@ -720,83 +728,131 @@ def category_style(guest: sqlite3.Row | dict) -> dict:
     return {"name": cat, **CATEGORY_COLORS[cat]}
 
 
+def _badge_background_pdf_path(category: str) -> Path | None:
+    """Vector category artwork (category/*.pdf) — keeps header text sharp on phones."""
+    filename = CATEGORY_BADGE_PDF.get(category) or CATEGORY_BADGE_PDF["Delegate"]
+    path = BASE_DIR / "category" / filename
+    return path if path.exists() else None
+
+
 def _badge_background_path(category: str) -> Path | None:
+    """Raster fallback (static/badges/*.png) if category PDF is missing."""
     filename = CATEGORY_BADGE_BG.get(category) or CATEGORY_BADGE_BG["Delegate"]
     path = BASE_DIR / "static" / "badges" / filename
     return path if path.exists() else None
+
+
+def _merge_vector_badge_background(
+    overlay_pdf: io.BytesIO, bg_pdf_path: Path, badge_w: float, badge_h: float
+) -> io.BytesIO:
+    """Place category PDF under the ReportLab overlay (vector, not rasterized)."""
+    import fitz  # PyMuPDF
+
+    out = fitz.open()
+    page = out.new_page(width=badge_w, height=badge_h)
+    bg = fitz.open(bg_pdf_path)
+    try:
+        page.show_pdf_page(page.rect, bg, 0)
+    finally:
+        bg.close()
+    overlay = fitz.open(stream=overlay_pdf.getvalue(), filetype="pdf")
+    try:
+        page.show_pdf_page(page.rect, overlay, 0)
+    finally:
+        overlay.close()
+    buffer = io.BytesIO(out.tobytes(deflate=True, garbage=3))
+    out.close()
+    buffer.seek(0)
+    return buffer
 
 
 def build_ticket_pdf(guest: sqlite3.Row) -> io.BytesIO:
     """NGPA badge PDF: category background + name, city, QR in the blank middle."""
     # Matches provided artwork aspect (~670×1024)
     badge_w, badge_h = 105 * mm, 160.5 * mm
-    buffer = io.BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=(badge_w, badge_h))
-
     style = category_style(guest)
     accent = style["rgb"]
     ink = (0.12, 0.12, 0.16)
 
-    bg_path = _badge_background_path(style["name"])
-    if bg_path:
-        pdf.drawImage(
-            str(bg_path),
-            0,
-            0,
-            width=badge_w,
-            height=badge_h,
-            preserveAspectRatio=True,
-            anchor="c",
-            mask="auto",
-        )
-    else:
-        pdf.setFillColorRGB(1, 1, 1)
-        pdf.rect(0, 0, badge_w, badge_h, fill=1, stroke=0)
-        pdf.setFillColorRGB(*accent)
-        pdf.rect(0, 0, badge_w, 18 * mm, fill=1, stroke=0)
-        pdf.setFillColorRGB(1, 1, 1)
-        pdf.setFont("Helvetica-Bold", 11)
-        pdf.drawCentredString(badge_w / 2, 6.5 * mm, style["name"].upper())
+    # Prefer vector category/*.pdf (sharp headers). PNG is a soft fallback only.
+    bg_pdf_path = _badge_background_pdf_path(style["name"])
+    bg_png_path = _badge_background_path(style["name"]) if not bg_pdf_path else None
 
-    name = _guest_field(guest, "name").upper()
-    city = _guest_field(guest, "city").upper()
-    code = guest_badge_id(_guest_field(guest, "token"))
+    def _paint_overlay(pdf: canvas.Canvas, *, draw_raster_bg: bool) -> None:
+        if draw_raster_bg and bg_png_path:
+            pdf.drawImage(
+                str(bg_png_path),
+                0,
+                0,
+                width=badge_w,
+                height=badge_h,
+                preserveAspectRatio=True,
+                anchor="c",
+                mask="auto",
+            )
+        elif draw_raster_bg and not bg_pdf_path:
+            pdf.setFillColorRGB(1, 1, 1)
+            pdf.rect(0, 0, badge_w, badge_h, fill=1, stroke=0)
+            pdf.setFillColorRGB(*accent)
+            pdf.rect(0, 0, badge_w, 18 * mm, fill=1, stroke=0)
+            pdf.setFillColorRGB(1, 1, 1)
+            pdf.setFont("Helvetica-Bold", 11)
+            pdf.drawCentredString(badge_w / 2, 6.5 * mm, style["name"].upper())
 
-    # Centered in the middle blank area (same placement as earlier badges)
-    center_x = badge_w / 2
-    name_y = badge_h - 68 * mm
-    city_y = badge_h - 76 * mm
-    qr_size = 34 * mm
-    qr_y = 46 * mm
-    qr_x = (badge_w - qr_size) / 2
+        name = _guest_field(guest, "name").upper()
+        city = _guest_field(guest, "city").upper()
+        code = guest_badge_id(_guest_field(guest, "token"))
 
-    pdf.setFillColorRGB(*ink)
-    pdf.setFont("Helvetica-Bold", 13)
-    max_chars = 24
-    if len(name) <= max_chars:
-        pdf.drawCentredString(center_x, name_y, name)
-    else:
-        pdf.drawCentredString(center_x, name_y + 3.5 * mm, name[:max_chars])
-        pdf.drawCentredString(
-            center_x, name_y - 2.5 * mm, name[max_chars : max_chars * 2]
-        )
-        city_y = badge_h - 80 * mm
+        center_x = badge_w / 2
+        name_y = badge_h - 68 * mm
+        city_y = badge_h - 76 * mm
+        qr_size = 34 * mm
+        qr_y = 46 * mm
+        qr_x = (badge_w - qr_size) / 2
 
-    if city:
-        pdf.setFont("Helvetica", 10)
-        pdf.drawCentredString(center_x, city_y, city)
+        pdf.setFillColorRGB(*ink)
+        pdf.setFont("Helvetica-Bold", 13)
+        max_chars = 24
+        if len(name) <= max_chars:
+            pdf.drawCentredString(center_x, name_y, name)
+        else:
+            pdf.drawCentredString(center_x, name_y + 3.5 * mm, name[:max_chars])
+            pdf.drawCentredString(
+                center_x, name_y - 2.5 * mm, name[max_chars : max_chars * 2]
+            )
+            city_y = badge_h - 80 * mm
 
-    _draw_qr_on_pdf(pdf, guest_qr_url(guest["token"]), qr_x, qr_y, qr_size)
+        if city:
+            pdf.setFont("Helvetica", 10)
+            pdf.drawCentredString(center_x, city_y, city)
 
-    # Gap QR bottom → ID top ≈ 1.6mm (matches approved preview); baseline below QR
-    qr_id_gap = 3.6 * mm
-    pdf.setFillColorRGB(*ink)
-    pdf.setFont("Helvetica-Bold", 8)
-    pdf.drawCentredString(center_x, qr_y - qr_id_gap, code)
+        _draw_qr_on_pdf(pdf, guest_qr_url(guest["token"]), qr_x, qr_y, qr_size)
 
+        qr_id_gap = 3.6 * mm
+        pdf.setFillColorRGB(*ink)
+        pdf.setFont("Helvetica-Bold", 8)
+        pdf.drawCentredString(center_x, qr_y - qr_id_gap, code)
+
+    # Overlay only (transparent) when merging vector PDF underneath.
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=(badge_w, badge_h))
+    _paint_overlay(pdf, draw_raster_bg=not bool(bg_pdf_path))
     pdf.showPage()
     pdf.save()
     buffer.seek(0)
+
+    if bg_pdf_path:
+        try:
+            return _merge_vector_badge_background(buffer, bg_pdf_path, badge_w, badge_h)
+        except Exception:
+            # PyMuPDF missing/failed → rebuild with PNG raster background
+            bg_png_path = _badge_background_path(style["name"])
+            buffer = io.BytesIO()
+            pdf = canvas.Canvas(buffer, pagesize=(badge_w, badge_h))
+            _paint_overlay(pdf, draw_raster_bg=True)
+            pdf.showPage()
+            pdf.save()
+            buffer.seek(0)
     return buffer
 
 
