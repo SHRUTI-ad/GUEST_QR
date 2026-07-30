@@ -13,6 +13,7 @@ import ssl
 import urllib.error
 import urllib.request
 import uuid
+import zipfile
 from datetime import datetime
 from email.message import EmailMessage
 from functools import wraps
@@ -1321,6 +1322,14 @@ def acknowledge(token: str):
     return render_template("ack.html", guest=guest, already=already)
 
 
+def _safe_pdf_filename(guest: sqlite3.Row) -> str:
+    """Unique download name: Name_SHORTID_pass.pdf"""
+    name = re.sub(r"[^\w\-]+", "_", (guest["name"] or "guest").strip(), flags=re.UNICODE)
+    name = name.strip("_") or "guest"
+    code = guest_badge_id(guest["token"])
+    return f"{name}_{code}_pass.pdf"
+
+
 @app.route("/pdf/<token>")
 @login_required
 def pdf_ticket(token: str):
@@ -1328,12 +1337,65 @@ def pdf_ticket(token: str):
     if guest is None:
         abort(404)
     pdf_buffer = build_ticket_pdf(guest)
-    filename = f"{guest['name'].replace(' ', '_')}_pass.pdf"
     return send_file(
         pdf_buffer,
         mimetype="application/pdf",
         as_attachment=True,
-        download_name=filename,
+        download_name=_safe_pdf_filename(guest),
+    )
+
+
+@app.route("/download-pdfs-zip")
+@login_required
+def download_pdfs_zip():
+    """One-click ZIP of all badge PDFs (optional ?category=Delegate)."""
+    raw_cat = (request.args.get("category") or "").strip()
+    category = normalize_category(raw_cat) if raw_cat else None
+    if raw_cat and category not in CATEGORIES:
+        category = None
+
+    conn = get_db()
+    if category:
+        guests = conn.execute(
+            "SELECT * FROM guests WHERE designation = ? ORDER BY name COLLATE NOCASE, id",
+            (category,),
+        ).fetchall()
+    else:
+        guests = conn.execute(
+            "SELECT * FROM guests ORDER BY designation, name COLLATE NOCASE, id"
+        ).fetchall()
+    conn.close()
+
+    if not guests:
+        flash("No guests to download.", "bad")
+        return redirect(url_for("home", category=category or None))
+
+    zip_buffer = io.BytesIO()
+    used_names: set[str] = set()
+    with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for guest in guests:
+            pdf_buffer = build_ticket_pdf(guest)
+            filename = _safe_pdf_filename(guest)
+            # Folder by category inside the zip for easier printing
+            cat = normalize_category(guest["designation"])
+            arcname = f"{cat}/{filename}"
+            if arcname in used_names:
+                stem = filename[:-4] if filename.lower().endswith(".pdf") else filename
+                arcname = f"{cat}/{stem}_{guest['id']}.pdf"
+            used_names.add(arcname)
+            zf.writestr(arcname, pdf_buffer.read())
+
+    zip_buffer.seek(0)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    if category:
+        zip_name = f"NGPA_{category}_badges_{stamp}.zip"
+    else:
+        zip_name = f"NGPA_all_badges_{stamp}.zip"
+    return send_file(
+        zip_buffer,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=zip_name,
     )
 
 

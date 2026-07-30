@@ -19,6 +19,11 @@
       </p>
     </div>
     <nav class="app-nav">
+      <a class="btn"
+         href="{{ url_for('download_pdfs_zip', category=category or None) }}"
+         onclick="return confirm('Download badge PDFs as a ZIP? Large lists can take a few minutes.');">
+        {% if category %}Download {{ category }} ZIP{% else %}Download all PDFs (ZIP){% endif %}
+      </a>
       <a class="btn secondary" href="{{ url_for('scan') }}">Scan QR</a>
       <a class="btn ghost" href="{{ url_for('logout') }}">Log out</a>
     </nav>
