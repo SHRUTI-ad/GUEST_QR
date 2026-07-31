@@ -744,8 +744,8 @@ def _badge_background_path(category: str) -> Path | None:
     return path if path.exists() else None
 
 
-# Render free tier ~30s request limit — keep each ZIP part small.
-ZIP_PART_SIZE = 30
+# Keep each ZIP part to this many PDFs (large lists split across part buttons).
+ZIP_PART_SIZE = 50
 
 
 def _merge_vector_badge_background(
