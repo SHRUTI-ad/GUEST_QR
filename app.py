@@ -247,9 +247,17 @@ if not SAMPLE_XLSX.exists():
 if not SAMPLE_XLSX.exists():
     SAMPLE_XLSX = BASE_DIR / "guests_sample.xlsx"
 
-# Fixed event guest lists (category Excel files in project folder)
+# Fixed event guest lists (category Excel files in project folder).
+# Auto-loaded on empty DB (e.g. Render restart) + "Reload event Excel files".
+# Faculty file: prefer "NGPA Faculty.xlsx", else FACULTY.xlsx
+_FACULTY_XLSX = (
+    (BASE_DIR / "NGPA Faculty.xlsx")
+    if (BASE_DIR / "NGPA Faculty.xlsx").exists()
+    else (BASE_DIR / "FACULTY.xlsx")
+)
 FIXED_GUEST_EXCELS = (
     (BASE_DIR / "DELEGATES.xlsx", "Delegate"),
+    (_FACULTY_XLSX, "Faculty"),
     (BASE_DIR / "PHARMA.xlsx", "Pharma"),
     (BASE_DIR / "ORGANISER.xlsx", "Organizer"),
 )
@@ -300,6 +308,21 @@ def init_db() -> None:
     _ensure_column(conn, "guests", "city", "TEXT DEFAULT ''")
     _ensure_column(conn, "guests", "designation", "TEXT DEFAULT ''")
 
+    # Permanent name+phone → QR token map (survives Clear / re-import)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS guest_qr_registry (
+            identity_key TEXT PRIMARY KEY,
+            token TEXT NOT NULL,
+            name TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    _backfill_qr_registry(conn)
+
     conn.commit()
     conn.close()
 
@@ -324,6 +347,59 @@ def _guest_identity_key(name: str, phone: str) -> str:
     return f"{_norm_name(name)}|{_norm_phone(phone)}"
 
 
+def _stamp() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _remember_qr_token(
+    conn: sqlite3.Connection, name: str, phone: str, token: str
+) -> None:
+    """Save name+phone → token. Never overwrites an existing token for that identity."""
+    key = _guest_identity_key(name, phone)
+    if not key.split("|")[0] or not key.split("|")[1] or not token:
+        return
+    now = _stamp()
+    conn.execute(
+        """
+        INSERT INTO guest_qr_registry
+            (identity_key, token, name, phone, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(identity_key) DO UPDATE SET
+            name = excluded.name,
+            phone = excluded.phone,
+            updated_at = excluded.updated_at
+        """,
+        (key, token, (name or "").strip(), phone or "", now, now),
+    )
+
+
+def _token_for_identity(conn: sqlite3.Connection, name: str, phone: str) -> str:
+    """Return existing QR token for name+phone, or create and register a new one."""
+    key = _guest_identity_key(name, phone)
+    row = conn.execute(
+        "SELECT token FROM guest_qr_registry WHERE identity_key = ?", (key,)
+    ).fetchone()
+    if row and row["token"]:
+        _remember_qr_token(conn, name, phone, row["token"])
+        return row["token"]
+
+    token = uuid.uuid4().hex
+    _remember_qr_token(conn, name, phone, token)
+    return token
+
+
+def _backfill_qr_registry(conn: sqlite3.Connection) -> None:
+    """Copy current guests into the permanent QR registry (safe to run often)."""
+    try:
+        rows = conn.execute(
+            "SELECT name, phone, token FROM guests WHERE token IS NOT NULL AND token != ''"
+        ).fetchall()
+    except sqlite3.Error:
+        return
+    for row in rows:
+        _remember_qr_token(conn, row["name"], row["phone"], row["token"])
+
+
 def _guest_insert_values(guest: dict, token: str | None = None) -> tuple:
     return (
         guest["name"],
@@ -340,13 +416,14 @@ def _guest_insert_values(guest: dict, token: str | None = None) -> tuple:
 
 def _insert_sample_guests(conn: sqlite3.Connection) -> None:
     for guest in SAMPLE_GUESTS:
+        token = _token_for_identity(conn, guest["name"], guest.get("phone") or "")
         conn.execute(
             """
             INSERT INTO guests
             (name, email, phone, meal, table_no, specialty, city, designation, token)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            _guest_insert_values(guest),
+            _guest_insert_values(guest, token=token),
         )
 
 
@@ -360,13 +437,20 @@ def sync_guests_from_rows(
     Merge Excel into the DB without changing QR/token for returning guests.
 
     Same name + phone = same person → keep token, short ID, and meal check-in flags.
-    New name/phone pair → new token.
+    Tokens are also stored in guest_qr_registry so Clear All + re-import restores
+    the same QR for printing.
 
-    replace_all: wipe every guest first, then import.
+    replace_all: wipe every guest first, then import (registry kept).
     category_scope: only remove missing guests in that category (other categories kept).
     """
     conn = get_db()
+    _backfill_qr_registry(conn)
+
     if replace_all:
+        # Save QR map, then clear live list only (registry stays)
+        existing_pre = conn.execute("SELECT name, phone, token FROM guests").fetchall()
+        for row in existing_pre:
+            _remember_qr_token(conn, row["name"], row["phone"], row["token"])
         conn.execute("DELETE FROM guests")
         existing = []
     else:
@@ -380,6 +464,7 @@ def sync_guests_from_rows(
     seen: set[str] = set()
     kept = 0
     created = 0
+    restored = 0
 
     for guest in rows:
         if not _norm_name(guest["name"]) or not _norm_phone(guest.get("phone") or ""):
@@ -416,19 +501,30 @@ def sync_guests_from_rows(
                     old["id"],
                 ),
             )
+            _remember_qr_token(conn, guest["name"], guest.get("phone") or "", old["token"])
             kept += 1
         else:
             payload = dict(guest)
             payload["designation"] = designation
+            had_token = conn.execute(
+                "SELECT token FROM guest_qr_registry WHERE identity_key = ?",
+                (key,),
+            ).fetchone()
+            token = _token_for_identity(
+                conn, guest["name"], guest.get("phone") or ""
+            )
             conn.execute(
                 """
                 INSERT INTO guests
                 (name, email, phone, meal, table_no, specialty, city, designation, token)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                _guest_insert_values(payload),
+                _guest_insert_values(payload, token=token),
             )
-            created += 1
+            if had_token:
+                restored += 1
+            else:
+                created += 1
 
     removed = 0
     for key, old in by_identity.items():
@@ -438,9 +534,11 @@ def sync_guests_from_rows(
             continue
         if not replace_all and scope is None:
             # Full-file sync: remove anyone missing from the file
+            _remember_qr_token(conn, old["name"], old["phone"], old["token"])
             conn.execute("DELETE FROM guests WHERE id = ?", (old["id"],))
             removed += 1
         elif scope:
+            _remember_qr_token(conn, old["name"], old["phone"], old["token"])
             conn.execute("DELETE FROM guests WHERE id = ?", (old["id"],))
             removed += 1
 
@@ -451,6 +549,7 @@ def sync_guests_from_rows(
         "total": total,
         "kept": kept,
         "created": created,
+        "restored": restored,
         "removed": removed,
     }
 
@@ -1267,6 +1366,7 @@ def upload_excel():
         flash(
             f"Imported {stats['total']} guest(s) ({mode}): "
             f"{stats['kept']} kept same QR/ID, "
+            f"{stats.get('restored', 0)} restored same QR after clear, "
             f"{stats['created']} new, "
             f"{stats['removed']} removed.",
             "ok",
@@ -1281,22 +1381,35 @@ def upload_excel():
 def clear_guests():
     scope = (request.form.get("clear_category") or "").strip()
     conn = get_db()
+    _backfill_qr_registry(conn)
     if scope and scope.lower() != "all":
         cat = normalize_category(scope)
-        count = conn.execute(
-            "SELECT COUNT(*) AS c FROM guests WHERE designation = ?",
+        rows = conn.execute(
+            "SELECT name, phone, token FROM guests WHERE designation = ?",
             (cat,),
-        ).fetchone()["c"]
+        ).fetchall()
+        for row in rows:
+            _remember_qr_token(conn, row["name"], row["phone"], row["token"])
         conn.execute("DELETE FROM guests WHERE designation = ?", (cat,))
         conn.commit()
         conn.close()
-        flash(f"Cleared {count} {cat} guest(s). Other categories kept.", "ok")
+        flash(
+            f"Cleared {len(rows)} {cat} guest(s). "
+            "QR IDs kept in DB — re-import same name+phone to restore the same QR.",
+            "ok",
+        )
     else:
-        count = conn.execute("SELECT COUNT(*) AS c FROM guests").fetchone()["c"]
+        rows = conn.execute("SELECT name, phone, token FROM guests").fetchall()
+        for row in rows:
+            _remember_qr_token(conn, row["name"], row["phone"], row["token"])
         conn.execute("DELETE FROM guests")
         conn.commit()
         conn.close()
-        flash(f"Cleared {count} guest(s) (all categories).", "ok")
+        flash(
+            f"Cleared {len(rows)} guest(s). "
+            "QR IDs kept in DB — re-import same name+phone to restore the same QR.",
+            "ok",
+        )
     return redirect(url_for("home"))
 
 
@@ -1338,6 +1451,7 @@ def guest_add():
 
     key = _guest_identity_key(payload["name"], payload["phone"])
     conn = get_db()
+    _backfill_qr_registry(conn)
     existing = conn.execute("SELECT id, name, phone FROM guests").fetchall()
     for row in existing:
         if _guest_identity_key(row["name"], row["phone"]) == key:
@@ -1349,21 +1463,32 @@ def guest_add():
             )
             return redirect(url_for("guest_edit", guest_id=row["id"]))
 
+    had_token = conn.execute(
+        "SELECT token FROM guest_qr_registry WHERE identity_key = ?", (key,)
+    ).fetchone()
+    token = _token_for_identity(conn, payload["name"], payload["phone"])
     conn.execute(
         """
         INSERT INTO guests
         (name, email, phone, meal, table_no, specialty, city, designation, token)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        _guest_insert_values(payload),
+        _guest_insert_values(payload, token=token),
     )
     conn.commit()
     conn.close()
-    flash(
-        f"Added {payload['name']} ({payload['designation']}). "
-        "Download their PDF for a new QR.",
-        "ok",
-    )
+    if had_token:
+        flash(
+            f"Added {payload['name']} ({payload['designation']}) "
+            "with the same QR/ID as before (from registry).",
+            "ok",
+        )
+    else:
+        flash(
+            f"Added {payload['name']} ({payload['designation']}). "
+            "Download their PDF for the QR.",
+            "ok",
+        )
     return _home_redirect_for_guest(payload["designation"])
 
 
@@ -1395,6 +1520,9 @@ def guest_edit(guest_id: int):
                 )
                 return redirect(url_for("guest_edit", guest_id=guest_id))
 
+        # Keep printed QR; register both old and new name+phone → same token
+        token = guest["token"]
+        _remember_qr_token(conn, guest["name"], guest["phone"], token)
         conn.execute(
             """
             UPDATE guests
@@ -1414,6 +1542,7 @@ def guest_edit(guest_id: int):
                 guest_id,
             ),
         )
+        _remember_qr_token(conn, payload["name"], payload["phone"], token)
         conn.commit()
         conn.close()
         flash(
@@ -1435,15 +1564,19 @@ def guest_delete(guest_id: int):
     cat = normalize_category(guest["designation"])
     name = guest["name"]
     conn = get_db()
+    _remember_qr_token(conn, guest["name"], guest["phone"], guest["token"])
     conn.execute("DELETE FROM guests WHERE id = ?", (guest_id,))
     conn.commit()
     conn.close()
-    flash(f"Removed {name}.", "ok")
+    flash(
+        f"Removed {name}. QR ID kept — re-add same name+phone to restore the same QR.",
+        "ok",
+    )
     return _home_redirect_for_guest(cat)
 
 
 def load_fixed_guest_excels(*, replace_all: bool = True) -> dict:
-    """Load DELEGATES / PHARMA / ORGANISER Excel files from the project folder."""
+    """Load fixed category Excel files from the project folder."""
     all_rows: list[dict] = []
     loaded_files: list[str] = []
     for path, category in FIXED_GUEST_EXCELS:
@@ -1454,7 +1587,8 @@ def load_fixed_guest_excels(*, replace_all: bool = True) -> dict:
         loaded_files.append(f"{path.name} ({len(rows)} {category})")
     if not all_rows:
         raise RuntimeError(
-            "No fixed Excel files found. Add DELEGATES.xlsx, PHARMA.xlsx, "
+            "No fixed Excel files found. Add DELEGATES.xlsx, "
+            "NGPA Faculty.xlsx (or FACULTY.xlsx), PHARMA.xlsx, "
             "and/or ORGANISER.xlsx in the project folder."
         )
     stats = sync_guests_from_rows(all_rows, replace_all=replace_all)
@@ -1471,7 +1605,8 @@ def reload_fixed_excels():
         flash(
             f"Loaded {stats['total']} guest(s) from: "
             + "; ".join(stats.get("files") or [])
-            + f". Kept same QR/ID: {stats['kept']}, new: {stats['created']}.",
+            + f". Kept same QR/ID: {stats['kept']}, "
+            f"restored: {stats.get('restored', 0)}, new: {stats['created']}.",
             "ok",
         )
     except Exception as exc:  # noqa: BLE001

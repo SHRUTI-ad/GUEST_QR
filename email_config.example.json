@@ -1,8 +1,8 @@
 {
   "smtp_host": "smtp.gmail.com",
   "smtp_port": 587,
-  "smtp_user": "your.email@gmail.com",
-  "smtp_password": "your-app-password",
-  "from_email": "your.email@gmail.com",
+  "smtp_user": "shrutianandas123@gmail.com",
+  "smtp_password": "paste-16-char-gmail-app-password-here",
+  "from_email": "shrutianandas123@gmail.com",
   "from_name": "Event Desk"
 }

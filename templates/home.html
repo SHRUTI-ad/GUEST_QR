@@ -140,7 +140,7 @@
         </label>
         <label class="help" style="display: flex; gap: 0.45rem; align-items: flex-start; margin-bottom: 0.65rem;">
           <input type="checkbox" name="replace_all" value="1" id="replace-all" style="margin-top: 0.2rem;" />
-          <span>Clear ALL guests first, then import this file (use for a full fresh list).</span>
+          <span>Clear guest list first, then import (QR IDs stay in DB — same name+phone gets the same printed QR back).</span>
         </label>
         <input type="file" name="excel_file" id="excel-file-input" accept=".xlsx" hidden />
         <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
@@ -164,14 +164,14 @@
       </form>
       <form method="post" action="{{ url_for('reload_fixed_excels') }}" style="margin-top: 0.55rem;">
         <button type="submit" class="btn btn-sm"
-          onclick="return confirm('Reload DELEGATES.xlsx + PHARMA.xlsx + ORGANISER.xlsx from the project folder?\n\nSame name + phone keeps the same QR/ID. Extra rows added at the end of Excel will be imported as new guests.');">
+          onclick="return confirm('Reload DELEGATES + NGPA Faculty + PHARMA + ORGANISER Excel from the project folder?\n\nSame name + phone keeps the same QR/ID. Extra rows at the end of Excel are imported as new guests.');">
           Reload event Excel files
         </button>
       </form>
       <p class="help" style="margin-top: 0.55rem;">
-        Fixed lists: <code>DELEGATES.xlsx</code>, <code>PHARMA.xlsx</code>, <code>ORGANISER.xlsx</code>.
-        Add more rows at the end of those files, then Reload (or Import one category).
-        Faculty / Guest Excel can be added later.
+        Fixed lists (auto-load if DB is empty): <code>DELEGATES.xlsx</code>,
+        <code>NGPA Faculty.xlsx</code>, <code>PHARMA.xlsx</code>, <code>ORGANISER.xlsx</code>.
+        Keep these files on GitHub/Render. Guest category: import manually or Add guest.
       </p>
     </div>
     {% endif %}
