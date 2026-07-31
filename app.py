@@ -247,19 +247,15 @@ if not SAMPLE_XLSX.exists():
 if not SAMPLE_XLSX.exists():
     SAMPLE_XLSX = BASE_DIR / "guests_sample.xlsx"
 
-# Fixed event guest lists (category Excel files in project folder).
-# Auto-loaded on empty DB (e.g. Render restart) + "Reload event Excel files".
-# Faculty file: prefer "NGPA Faculty.xlsx", else FACULTY.xlsx
-_FACULTY_XLSX = (
-    (BASE_DIR / "NGPA Faculty.xlsx")
-    if (BASE_DIR / "NGPA Faculty.xlsx").exists()
-    else (BASE_DIR / "FACULTY.xlsx")
-)
+# Fixed event guest lists (project root). Source masters live in new_final_excell/.
+# Auto-loaded on empty DB (Render redeploy) + admin "Reload event Excel files".
+# Same name+phone reuses QR via guest_qr_registry.
 FIXED_GUEST_EXCELS = (
     (BASE_DIR / "DELEGATES.xlsx", "Delegate"),
-    (_FACULTY_XLSX, "Faculty"),
+    (BASE_DIR / "FACULTY.xlsx", "Faculty"),
     (BASE_DIR / "PHARMA.xlsx", "Pharma"),
     (BASE_DIR / "ORGANISER.xlsx", "Organizer"),
+    (BASE_DIR / "GUESTS.xlsx", "Guest"),
 )
 
 
@@ -584,13 +580,22 @@ def read_guests_from_excel(
             "phone number",
             "mobile number",
             "mob",
+            "mo",
             "mobile no",
             "mobile no.",
             "number",
             "num",
         },
         "specialty": {"specialty", "speciality", "field", "department"},
-        "city": {"city", "place", "location", "company"},
+        "city": {
+            "city",
+            "place",
+            "location",
+            "company",
+            "hospital",
+            "hospital name",
+            "hospital name ",
+        },
         "designation": {
             "designation",
             "role",
@@ -1576,7 +1581,7 @@ def guest_delete(guest_id: int):
 
 
 def load_fixed_guest_excels(*, replace_all: bool = True) -> dict:
-    """Load fixed category Excel files from the project folder."""
+    """Load Delegate/Faculty/Pharma/Organizer/Guest Excel files from project root."""
     all_rows: list[dict] = []
     loaded_files: list[str] = []
     for path, category in FIXED_GUEST_EXCELS:
@@ -1587,9 +1592,8 @@ def load_fixed_guest_excels(*, replace_all: bool = True) -> dict:
         loaded_files.append(f"{path.name} ({len(rows)} {category})")
     if not all_rows:
         raise RuntimeError(
-            "No fixed Excel files found. Add DELEGATES.xlsx, "
-            "NGPA Faculty.xlsx (or FACULTY.xlsx), PHARMA.xlsx, "
-            "and/or ORGANISER.xlsx in the project folder."
+            "No fixed Excel files found. Add DELEGATES.xlsx, FACULTY.xlsx, "
+            "PHARMA.xlsx, ORGANISER.xlsx, and/or GUESTS.xlsx in the project folder."
         )
     stats = sync_guests_from_rows(all_rows, replace_all=replace_all)
     stats["files"] = loaded_files

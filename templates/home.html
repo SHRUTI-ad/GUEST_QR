@@ -164,14 +164,15 @@
       </form>
       <form method="post" action="{{ url_for('reload_fixed_excels') }}" style="margin-top: 0.55rem;">
         <button type="submit" class="btn btn-sm"
-          onclick="return confirm('Reload DELEGATES + NGPA Faculty + PHARMA + ORGANISER Excel from the project folder?\n\nSame name + phone keeps the same QR/ID. Extra rows at the end of Excel are imported as new guests.');">
+          onclick="return confirm('Reload all category Excel files (Delegate, Faculty, Pharma, Organizer, Guest)?\n\nSame name + phone keeps the same QR/ID.');">
           Reload event Excel files
         </button>
       </form>
       <p class="help" style="margin-top: 0.55rem;">
-        Fixed lists (auto-load if DB is empty): <code>DELEGATES.xlsx</code>,
-        <code>NGPA Faculty.xlsx</code>, <code>PHARMA.xlsx</code>, <code>ORGANISER.xlsx</code>.
-        Keep these files on GitHub/Render. Guest category: import manually or Add guest.
+        Default lists (auto-load after Render redeploy if DB is empty):
+        <code>DELEGATES.xlsx</code>, <code>FACULTY.xlsx</code>, <code>PHARMA.xlsx</code>,
+        <code>ORGANISER.xlsx</code>, <code>GUESTS.xlsx</code>
+        (from <code>new_final_excell</code>). Same name + phone → same QR PDF.
       </p>
     </div>
     {% endif %}
