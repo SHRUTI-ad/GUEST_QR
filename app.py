@@ -1200,6 +1200,11 @@ def home():
         ]
     conn.close()
 
+    # ZIP download parts for current list (Delegate/Pharma need multiple parts on Render)
+    zip_count = len(scoped)
+    zip_parts = max(1, (zip_count + ZIP_PART_SIZE - 1) // ZIP_PART_SIZE) if zip_count else 0
+    zip_part_links = list(range(1, zip_parts + 1)) if zip_parts else []
+
     return render_template(
         "home.html",
         guests=guests,
@@ -1214,6 +1219,9 @@ def home():
         status=status,
         category_counts=category_counts,
         zip_part_size=ZIP_PART_SIZE,
+        zip_parts=zip_parts,
+        zip_part_links=zip_part_links,
+        zip_count=zip_count,
     )
 
 
