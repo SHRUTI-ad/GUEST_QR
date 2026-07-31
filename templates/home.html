@@ -54,8 +54,8 @@
   {% endif %}
 
   {% with messages = get_flashed_messages(with_categories=true) %}
-    {% for category, msg in messages %}
-      <div class="status-banner {{ 'ok' if category == 'ok' else 'invalid' }}">{{ msg }}</div>
+    {% for flash_cat, msg in messages %}
+      <div class="status-banner {{ 'ok' if flash_cat == 'ok' else 'invalid' }}">{{ msg }}</div>
     {% endfor %}
   {% endwith %}
 
@@ -92,7 +92,42 @@
     {% endfor %}
   </div>
 
-  {% if is_admin and not category %}
+  {% if is_admin %}
+    <div class="panel tools-compact">
+      <p class="field-label" style="margin: 0 0 0.45rem;">Add guest</p>
+      <form method="post" action="{{ url_for('guest_add') }}" style="display: grid; gap: 0.55rem;">
+        <label class="field">
+          <span class="field-label">Name *</span>
+          <input type="text" name="name" required autocomplete="name" placeholder="Full name" />
+        </label>
+        <label class="field">
+          <span class="field-label">Phone *</span>
+          <input type="text" name="phone" required inputmode="tel" autocomplete="tel" placeholder="10-digit mobile" />
+        </label>
+        <label class="field">
+          <span class="field-label">Email (optional)</span>
+          <input type="email" name="email" autocomplete="email" placeholder="optional" />
+        </label>
+        <label class="field">
+          <span class="field-label">City / Company</span>
+          <input type="text" name="city" placeholder="City or company" />
+        </label>
+        <label class="field">
+          <span class="field-label">Category</span>
+          <select name="designation">
+            {% for cat in categories %}
+              <option value="{{ cat }}" {% if category == cat %}selected{% endif %}>{{ cat }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit" class="btn btn-sm">Add guest</button>
+      </form>
+      <p class="help" style="margin-top: 0.55rem;">
+        Add one person here, or use Excel below for bulk. Edit / Remove is on each guest card.
+      </p>
+    </div>
+
+    {% if not category %}
     <div class="panel tools-compact">
       <form method="post" action="{{ url_for('upload_excel') }}" id="excel-upload-form" enctype="multipart/form-data">
         <label class="field" style="margin-bottom: 0.55rem;">
@@ -139,6 +174,7 @@
         Faculty / Guest Excel can be added later.
       </p>
     </div>
+    {% endif %}
   {% endif %}
 
   <div class="panel">
@@ -186,6 +222,15 @@
         <div class="row-actions">
           <a class="btn secondary" href="{{ url_for('pdf_ticket', token=g.token) }}">PDF</a>
           <a class="btn checkin-btn {{ category_colors[cat].css }}" href="{{ url_for('checkin', token=g.token) }}">Check-in</a>
+          {% if is_admin %}
+            <a class="btn ghost" href="{{ url_for('guest_edit', guest_id=g.id) }}">Edit</a>
+            <form method="post" action="{{ url_for('guest_delete', guest_id=g.id) }}" style="display: inline;">
+              <button type="submit" class="btn ghost"
+                onclick="return confirm('Remove {{ g.name|e }}? Their QR will stop working.');">
+                Remove
+              </button>
+            </form>
+          {% endif %}
         </div>
       </article>
     {% else %}
@@ -193,7 +238,7 @@
     {% endfor %}
   </div>
 
-  {% if is_admin and not category %}
+  {% if is_admin %}
   <script>
     (function () {
       const form = document.getElementById("excel-upload-form");

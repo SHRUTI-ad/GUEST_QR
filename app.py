@@ -81,13 +81,17 @@ CATEGORY_COLORS = {
     "Guest": {"rgb": (0.45, 0.18, 0.65), "css": "cat-guest"},  # purple
 }
 # Prefer vector PDFs in category/ (sharp on phone). PNG under static/badges/ is fallback only.
+# Artwork is print-size ~76×106 mm (from "size updated" templates).
 CATEGORY_BADGE_PDF = {
     "Delegate": "DELEGATE.pdf",
     "Faculty": "FACULTY.pdf",
     "Organizer": "ORGANIZER.pdf",
     "Pharma": "PHARMA.pdf",
-    "Guest": "GUEST_2.pdf",
+    "Guest": "GUEST.pdf",
 }
+# Physical badge page size matching updated category PDFs (76 × 106 mm).
+BADGE_PAGE_W_MM = 76.0
+BADGE_PAGE_H_MM = 106.0
 CATEGORY_BADGE_BG = {
     "Delegate": "delegate.png",
     "Faculty": "faculty.png",
@@ -779,13 +783,29 @@ def _merge_vector_badge_background(
     return buffer
 
 
+def _badge_page_size_pts(bg_pdf_path: Path | None) -> tuple[float, float]:
+    """Use native category PDF page size when available (keeps art sharp, no stretch)."""
+    if bg_pdf_path and bg_pdf_path.exists():
+        try:
+            import fitz  # PyMuPDF
+
+            doc = fitz.open(bg_pdf_path)
+            try:
+                rect = doc[0].rect
+                if rect.width > 0 and rect.height > 0:
+                    return float(rect.width), float(rect.height)
+            finally:
+                doc.close()
+        except Exception:  # noqa: BLE001
+            pass
+    return BADGE_PAGE_W_MM * mm, BADGE_PAGE_H_MM * mm
+
+
 def build_ticket_pdf(guest: sqlite3.Row, bg_docs: dict | None = None) -> io.BytesIO:
     """NGPA badge PDF: category background + name, city, QR in the blank middle.
 
     Pass bg_docs={} during bulk ZIP builds to reuse opened category PDFs (much faster).
     """
-    # Matches provided artwork aspect (~670×1024)
-    badge_w, badge_h = 105 * mm, 160.5 * mm
     style = category_style(guest)
     accent = style["rgb"]
     ink = (0.12, 0.12, 0.16)
@@ -793,6 +813,7 @@ def build_ticket_pdf(guest: sqlite3.Row, bg_docs: dict | None = None) -> io.Byte
     # Prefer vector category/*.pdf (sharp headers). PNG is a soft fallback only.
     bg_pdf_path = _badge_background_pdf_path(style["name"])
     bg_png_path = _badge_background_path(style["name"]) if not bg_pdf_path else None
+    badge_w, badge_h = _badge_page_size_pts(bg_pdf_path)
 
     def _paint_overlay(pdf: canvas.Canvas, *, draw_raster_bg: bool) -> None:
         if draw_raster_bg and bg_png_path:
@@ -810,43 +831,41 @@ def build_ticket_pdf(guest: sqlite3.Row, bg_docs: dict | None = None) -> io.Byte
             pdf.setFillColorRGB(1, 1, 1)
             pdf.rect(0, 0, badge_w, badge_h, fill=1, stroke=0)
             pdf.setFillColorRGB(*accent)
-            pdf.rect(0, 0, badge_w, 18 * mm, fill=1, stroke=0)
+            pdf.rect(0, 0, badge_w, 12 * mm, fill=1, stroke=0)
             pdf.setFillColorRGB(1, 1, 1)
-            pdf.setFont("Helvetica-Bold", 11)
-            pdf.drawCentredString(badge_w / 2, 6.5 * mm, style["name"].upper())
+            pdf.setFont("Helvetica-Bold", 9)
+            pdf.drawCentredString(badge_w / 2, 4.2 * mm, style["name"].upper())
 
         name = _guest_field(guest, "name").upper()
         city = _guest_field(guest, "city").upper()
         code = guest_badge_id(_guest_field(guest, "token"))
 
+        # Layout tuned for 76×106 mm print badge (blank middle above footer band)
         center_x = badge_w / 2
-        name_y = badge_h - 68 * mm
-        city_y = badge_h - 76 * mm
-        qr_size = 34 * mm
-        qr_y = 46 * mm
+        name_y = badge_h - 45 * mm
+        city_y = badge_h - 50.5 * mm
+        qr_size = 24 * mm
+        qr_y = 31 * mm  # raised above footer band
         qr_x = (badge_w - qr_size) / 2
 
+        # Long names: shrink font to stay on one line (never wrap) so city stays above QR.
         pdf.setFillColorRGB(*ink)
-        pdf.setFont("Helvetica-Bold", 13)
-        max_chars = 24
-        if len(name) <= max_chars:
-            pdf.drawCentredString(center_x, name_y, name)
-        else:
-            pdf.drawCentredString(center_x, name_y + 3.5 * mm, name[:max_chars])
-            pdf.drawCentredString(
-                center_x, name_y - 2.5 * mm, name[max_chars : max_chars * 2]
-            )
-            city_y = badge_h - 80 * mm
+        name_font = 10
+        name_max_w = badge_w - 6 * mm
+        while name_font > 5.5 and pdf.stringWidth(name, "Helvetica-Bold", name_font) > name_max_w:
+            name_font -= 0.5
+        pdf.setFont("Helvetica-Bold", name_font)
+        pdf.drawCentredString(center_x, name_y, name)
 
         if city:
-            pdf.setFont("Helvetica", 10)
+            pdf.setFont("Helvetica", 8)
             pdf.drawCentredString(center_x, city_y, city)
 
         _draw_qr_on_pdf(pdf, guest_qr_url(guest["token"]), qr_x, qr_y, qr_size)
 
-        qr_id_gap = 3.6 * mm
+        qr_id_gap = 2.8 * mm
         pdf.setFillColorRGB(*ink)
-        pdf.setFont("Helvetica-Bold", 8)
+        pdf.setFont("Helvetica-Bold", 7)
         pdf.drawCentredString(center_x, qr_y - qr_id_gap, code)
 
     # Overlay only (transparent) when merging vector PDF underneath.
@@ -1279,6 +1298,148 @@ def clear_guests():
         conn.close()
         flash(f"Cleared {count} guest(s) (all categories).", "ok")
     return redirect(url_for("home"))
+
+
+def _guest_form_payload() -> tuple[dict | None, str | None]:
+    """Read Add/Edit guest form. Returns (payload, error)."""
+    name = (request.form.get("name") or "").strip()
+    phone = (request.form.get("phone") or "").strip()
+    email = (request.form.get("email") or "").strip()
+    city = (request.form.get("city") or "").strip()
+    designation = normalize_category(request.form.get("designation") or "Delegate")
+    if not name:
+        return None, "Name is required."
+    if not _norm_phone(phone):
+        return None, "Phone is required (digits)."
+    return {
+        "name": name,
+        "phone": phone,
+        "email": email,
+        "city": city,
+        "designation": designation,
+        "meal": (request.form.get("meal") or "Vegetarian").strip() or "Vegetarian",
+        "table_no": (request.form.get("table_no") or "").strip(),
+        "specialty": (request.form.get("specialty") or "").strip(),
+    }, None
+
+
+def _home_redirect_for_guest(designation: str | None = None):
+    cat = normalize_category(designation) if designation else None
+    return redirect(url_for("home", category=cat if cat in CATEGORIES else None))
+
+
+@app.route("/guest/add", methods=["POST"])
+@admin_required
+def guest_add():
+    payload, err = _guest_form_payload()
+    if err:
+        flash(err, "bad")
+        return _home_redirect_for_guest(request.form.get("designation"))
+
+    key = _guest_identity_key(payload["name"], payload["phone"])
+    conn = get_db()
+    existing = conn.execute("SELECT id, name, phone FROM guests").fetchall()
+    for row in existing:
+        if _guest_identity_key(row["name"], row["phone"]) == key:
+            conn.close()
+            flash(
+                f"Guest already exists (same name + phone): {row['name']}. "
+                "Use Edit instead.",
+                "bad",
+            )
+            return redirect(url_for("guest_edit", guest_id=row["id"]))
+
+    conn.execute(
+        """
+        INSERT INTO guests
+        (name, email, phone, meal, table_no, specialty, city, designation, token)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        _guest_insert_values(payload),
+    )
+    conn.commit()
+    conn.close()
+    flash(
+        f"Added {payload['name']} ({payload['designation']}). "
+        "Download their PDF for a new QR.",
+        "ok",
+    )
+    return _home_redirect_for_guest(payload["designation"])
+
+
+@app.route("/guest/<int:guest_id>/edit", methods=["GET", "POST"])
+@admin_required
+def guest_edit(guest_id: int):
+    guest = get_guest_by_id(guest_id)
+    if guest is None:
+        flash("Guest not found.", "bad")
+        return redirect(url_for("home"))
+
+    if request.method == "POST":
+        payload, err = _guest_form_payload()
+        if err:
+            flash(err, "bad")
+            return redirect(url_for("guest_edit", guest_id=guest_id))
+
+        key = _guest_identity_key(payload["name"], payload["phone"])
+        conn = get_db()
+        clash = conn.execute(
+            "SELECT id, name, phone FROM guests WHERE id != ?", (guest_id,)
+        ).fetchall()
+        for row in clash:
+            if _guest_identity_key(row["name"], row["phone"]) == key:
+                conn.close()
+                flash(
+                    f"Another guest already uses that name + phone ({row['name']}).",
+                    "bad",
+                )
+                return redirect(url_for("guest_edit", guest_id=guest_id))
+
+        conn.execute(
+            """
+            UPDATE guests
+            SET name = ?, email = ?, phone = ?, meal = ?, table_no = ?,
+                specialty = ?, city = ?, designation = ?
+            WHERE id = ?
+            """,
+            (
+                payload["name"],
+                payload["email"],
+                payload["phone"],
+                payload["meal"],
+                payload["table_no"],
+                payload["specialty"],
+                payload["city"],
+                payload["designation"],
+                guest_id,
+            ),
+        )
+        conn.commit()
+        conn.close()
+        flash(
+            f"Updated {payload['name']}. QR/ID kept the same — re-download PDF if name/city changed.",
+            "ok",
+        )
+        return _home_redirect_for_guest(payload["designation"])
+
+    return render_template("guest_edit.html", guest=guest)
+
+
+@app.route("/guest/<int:guest_id>/delete", methods=["POST"])
+@admin_required
+def guest_delete(guest_id: int):
+    guest = get_guest_by_id(guest_id)
+    if guest is None:
+        flash("Guest not found.", "bad")
+        return redirect(url_for("home"))
+    cat = normalize_category(guest["designation"])
+    name = guest["name"]
+    conn = get_db()
+    conn.execute("DELETE FROM guests WHERE id = ?", (guest_id,))
+    conn.commit()
+    conn.close()
+    flash(f"Removed {name}.", "ok")
+    return _home_redirect_for_guest(cat)
 
 
 def load_fixed_guest_excels(*, replace_all: bool = True) -> dict:

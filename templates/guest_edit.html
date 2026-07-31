@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Edit guest · {{ guest.name }}{% endblock %}
+{% block content %}
+  <header class="app-header header-all">
+    <div>
+      <p class="brand">Event Guest QR · Admin</p>
+      <h1>Edit guest</h1>
+      <p class="sub">QR / badge ID stays the same after save</p>
+    </div>
+    <nav class="app-nav">
+      <a class="btn secondary" href="{{ url_for('home', category=normalize_category(guest.designation)) }}">Back</a>
+    </nav>
+  </header>
+
+  <div class="panel" style="margin-top: 0.75rem;">
+    <form method="post" action="{{ url_for('guest_edit', guest_id=guest.id) }}" class="stack-form" style="display: grid; gap: 0.65rem;">
+      <label class="field">
+        <span class="field-label">Name *</span>
+        <input type="text" name="name" value="{{ guest.name or '' }}" required autocomplete="name" />
+      </label>
+      <label class="field">
+        <span class="field-label">Phone *</span>
+        <input type="text" name="phone" value="{{ guest.phone or '' }}" required inputmode="tel" autocomplete="tel" />
+      </label>
+      <label class="field">
+        <span class="field-label">Email (optional)</span>
+        <input type="email" name="email" value="{{ guest.email or '' }}" autocomplete="email" />
+      </label>
+      <label class="field">
+        <span class="field-label">City / Company</span>
+        <input type="text" name="city" value="{{ guest.city or '' }}" />
+      </label>
+      <label class="field">
+        <span class="field-label">Category</span>
+        <select name="designation">
+          {% for cat in categories %}
+            <option value="{{ cat }}" {% if normalize_category(guest.designation) == cat %}selected{% endif %}>{{ cat }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.25rem;">
+        <button class="btn" type="submit">Save changes</button>
+        <a class="btn secondary" href="{{ url_for('pdf_ticket', token=guest.token) }}">Download PDF</a>
+        <a class="btn ghost" href="{{ url_for('home', category=normalize_category(guest.designation)) }}">Cancel</a>
+      </div>
+    </form>
+  </div>
+{% endblock %}
