@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 import uuid
 import zipfile
-from datetime import datetime
+from datetime import date, datetime
 from email.message import EmailMessage
 from functools import wraps
 from pathlib import Path
@@ -65,6 +65,36 @@ STAFF_PASSWORD_HASH = generate_password_hash(STAFF_PASSWORD)
 EVENT_NAME = "NGPA 2026 Annual Conference"
 EVENT_DATE = "8 & 9 August 2026 · Saturday & Sunday"
 EVENT_VENUE = "North Gujarat Physician Association"
+
+# Meal check-in by event day (one QR; staff pick the day on check-in screen)
+# Day 1 = 8 Aug: Breakfast + Lunch + Dinner
+# Day 2 = 9 Aug: Breakfast + Lunch
+EVENT_MEAL_DAYS = {
+    1: {
+        "label": "8 Aug (Sat)",
+        "date": "2026-08-08",
+        "meals": ("breakfast", "lunch", "dinner"),
+    },
+    2: {
+        "label": "9 Aug (Sun)",
+        "date": "2026-08-09",
+        "meals": ("breakfast", "lunch"),
+    },
+}
+MEAL_LABELS = {
+    "breakfast": "Breakfast",
+    "lunch": "Lunch",
+    "dinner": "Dinner",
+}
+# (day, meal) -> (claimed_col, claimed_at_col)
+# Day-1 lunch/dinner reuse existing lunch_claimed / dinner_claimed columns.
+MEAL_CLAIM_COLUMNS = {
+    (1, "breakfast"): ("breakfast_d1_claimed", "breakfast_d1_claimed_at"),
+    (1, "lunch"): ("lunch_claimed", "claimed_at"),
+    (1, "dinner"): ("dinner_claimed", "dinner_claimed_at"),
+    (2, "breakfast"): ("breakfast_d2_claimed", "breakfast_d2_claimed_at"),
+    (2, "lunch"): ("lunch_d2_claimed", "lunch_d2_claimed_at"),
+}
 
 # Public base URL embedded inside QR codes (must be reachable by staff phones).
 # Example: http://10.197.190.212:5050
@@ -298,6 +328,12 @@ def init_db() -> None:
     _ensure_column(conn, "guests", "pdf_sent_at", "TEXT")
     _ensure_column(conn, "guests", "dinner_claimed", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "guests", "dinner_claimed_at", "TEXT")
+    _ensure_column(conn, "guests", "breakfast_d1_claimed", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "guests", "breakfast_d1_claimed_at", "TEXT")
+    _ensure_column(conn, "guests", "breakfast_d2_claimed", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "guests", "breakfast_d2_claimed_at", "TEXT")
+    _ensure_column(conn, "guests", "lunch_d2_claimed", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "guests", "lunch_d2_claimed_at", "TEXT")
     _ensure_column(conn, "guests", "email_acked", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "guests", "email_acked_at", "TEXT")
     _ensure_column(conn, "guests", "specialty", "TEXT DEFAULT ''")
@@ -1214,6 +1250,44 @@ def mark_pdf_sent(guest_id: int) -> None:
     conn.close()
 
 
+def default_event_day() -> int:
+    """Pick staff default day from today's date (8 Aug = day 1, from 9 Aug = day 2)."""
+    today = date.today().isoformat()
+    if today >= EVENT_MEAL_DAYS[2]["date"]:
+        return 2
+    return 1
+
+
+def parse_event_day(raw) -> int:
+    try:
+        day = int(raw or 0)
+    except (TypeError, ValueError):
+        day = 0
+    if day in EVENT_MEAL_DAYS:
+        return day
+    return default_event_day()
+
+
+def meal_is_claimed(guest: sqlite3.Row, day: int, meal: str) -> bool:
+    cols = MEAL_CLAIM_COLUMNS.get((day, meal))
+    if not cols:
+        return False
+    try:
+        return bool(guest[cols[0]])
+    except (IndexError, KeyError):
+        return False
+
+
+def meal_claimed_at(guest: sqlite3.Row, day: int, meal: str) -> str:
+    cols = MEAL_CLAIM_COLUMNS.get((day, meal))
+    if not cols:
+        return ""
+    try:
+        return guest[cols[1]] or ""
+    except (IndexError, KeyError):
+        return ""
+
+
 @app.context_processor
 def inject_event():
     role = session.get("role")
@@ -1229,6 +1303,10 @@ def inject_event():
         "category_colors": CATEGORY_COLORS,
         "normalize_category": normalize_category,
         "category_style": category_style,
+        "event_meal_days": EVENT_MEAL_DAYS,
+        "meal_labels": MEAL_LABELS,
+        "meal_is_claimed": meal_is_claimed,
+        "meal_claimed_at": meal_claimed_at,
     }
 
 
@@ -1276,8 +1354,11 @@ def home():
         if raw_cat and raw_cat.lower() != "all"
         else ""
     )
+    day = parse_event_day(request.args.get("day"))
+    day_meals = EVENT_MEAL_DAYS[day]["meals"]
     status = (request.args.get("status") or "").strip().lower()
-    if status not in {"", "all", "arrived", "lunch", "dinner"}:
+    allowed_status = {"", "all", *day_meals}
+    if status not in allowed_status:
         status = ""
     if status == "all":
         status = ""
@@ -1296,17 +1377,14 @@ def home():
             g for g in scoped if normalize_category(g["designation"]) == category
         ]
 
-    arrived = sum(1 for g in scoped if g["arrived"])
-    lunch_claimed = sum(1 for g in scoped if g["lunch_claimed"])
-    dinner_claimed = sum(1 for g in scoped if g["dinner_claimed"])
+    meal_counts = {
+        meal: sum(1 for g in scoped if meal_is_claimed(g, day, meal))
+        for meal in day_meals
+    }
 
     guests = scoped
-    if status == "arrived":
-        guests = [g for g in guests if g["arrived"]]
-    elif status == "lunch":
-        guests = [g for g in guests if g["lunch_claimed"]]
-    elif status == "dinner":
-        guests = [g for g in guests if g["dinner_claimed"]]
+    if status in day_meals:
+        guests = [g for g in guests if meal_is_claimed(g, day, status)]
 
     if q:
         needle = q.lower()
@@ -1331,9 +1409,13 @@ def home():
     return render_template(
         "home.html",
         guests=guests,
-        arrived=arrived,
-        lunch_claimed=lunch_claimed,
-        dinner_claimed=dinner_claimed,
+        meal_counts=meal_counts,
+        day=day,
+        day_meals=day_meals,
+        day_label=EVENT_MEAL_DAYS[day]["label"],
+        # legacy template vars (day-1 lunch/dinner)
+        lunch_claimed=meal_counts.get("lunch", 0),
+        dinner_claimed=meal_counts.get("dinner", 0),
         total=len(all_guests),
         scoped_total=len(scoped),
         shown=len(guests),
@@ -1844,68 +1926,80 @@ def _mark_arrived_if_needed(conn: sqlite3.Connection, guest: sqlite3.Row, token:
 @login_required
 def checkin(token: str):
     guest = get_guest_by_token(token)
+    day = parse_event_day(request.args.get("day") or request.form.get("day"))
+    day_info = EVENT_MEAL_DAYS[day]
+    day_meals = day_info["meals"]
     focus_meal = (request.args.get("meal") or request.form.get("meal") or "").lower()
-    if focus_meal not in {"lunch", "dinner"}:
+    if focus_meal not in day_meals:
         focus_meal = ""
 
     if guest is None:
         return (
             render_template(
-                "checkin.html", guest=None, status="invalid", focus_meal=focus_meal
+                "checkin.html",
+                guest=None,
+                status="invalid",
+                focus_meal=focus_meal,
+                day=day,
+                day_meals=day_meals,
+                day_label=day_info["label"],
             ),
             404,
         )
 
     message = None
     if request.method == "POST":
-        action = request.form.get("action")
+        action = (request.form.get("action") or "").lower().strip()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        is_admin_user = session.get("role") == "admin"
         conn = get_db()
 
-        if action == "arrive":
-            if guest["arrived"]:
-                message = "Guest was already marked arrived."
+        if action in day_meals:
+            claim_col, at_col = MEAL_CLAIM_COLUMNS[(day, action)]
+            if meal_is_claimed(guest, day, action):
+                message = f"{MEAL_LABELS[action]} was already claimed for {day_info['label']}."
             else:
-                conn.execute(
-                    "UPDATE guests SET arrived = 1, arrived_at = ? WHERE token = ?",
-                    (now, token),
-                )
-                message = "Guest marked as arrived."
-        elif action == "lunch":
-            if guest["lunch_claimed"]:
-                message = "Lunch was already claimed."
-            else:
+                # Keep arrived flag in sync for older reports; no separate "mark arrival" UI
                 _mark_arrived_if_needed(conn, guest, token, now)
                 conn.execute(
-                    "UPDATE guests SET lunch_claimed = 1, claimed_at = ? WHERE token = ?",
+                    f"UPDATE guests SET {claim_col} = 1, {at_col} = ? WHERE token = ?",
                     (now, token),
                 )
-                message = "Lunch marked as claimed."
-        elif action == "dinner":
-            if guest["dinner_claimed"]:
-                message = "Dinner was already claimed."
+                message = f"{MEAL_LABELS[action]} marked for {day_info['label']}."
+        elif action.startswith("undo_"):
+            if not is_admin_user:
+                message = "Undo is admin-only."
             else:
-                _mark_arrived_if_needed(conn, guest, token, now)
-                conn.execute(
-                    """
-                    UPDATE guests
-                    SET dinner_claimed = 1, dinner_claimed_at = ?
-                    WHERE token = ?
-                    """,
-                    (now, token),
-                )
-                message = "Dinner marked as claimed."
+                undo_target = action[5:]  # after "undo_"
+                if undo_target in day_meals:
+                    claim_col, at_col = MEAL_CLAIM_COLUMNS[(day, undo_target)]
+                    if not meal_is_claimed(guest, day, undo_target):
+                        message = (
+                            f"{MEAL_LABELS[undo_target]} is not claimed "
+                            f"for {day_info['label']}."
+                        )
+                    else:
+                        conn.execute(
+                            f"UPDATE guests SET {claim_col} = 0, {at_col} = NULL WHERE token = ?",
+                            (token,),
+                        )
+                        message = (
+                            f"{MEAL_LABELS[undo_target]} undone for {day_info['label']}."
+                        )
+                else:
+                    message = "Cannot undo that meal for this day."
         else:
-            message = "Unknown action."
+            message = "Unknown action or meal not available for this day."
 
         conn.commit()
         conn.close()
         guest = get_guest_by_token(token)
 
-    if guest["lunch_claimed"] and guest["dinner_claimed"]:
+    claimed_today = [m for m in day_meals if meal_is_claimed(guest, day, m)]
+    if day_meals and len(claimed_today) == len(day_meals):
         status = "claimed"
-    elif guest["lunch_claimed"] or guest["dinner_claimed"] or guest["arrived"]:
-        status = "arrived"
+    elif claimed_today:
+        status = "partial"
     else:
         status = "ok"
 
@@ -1915,6 +2009,9 @@ def checkin(token: str):
         status=status,
         message=message,
         focus_meal=focus_meal,
+        day=day,
+        day_meals=day_meals,
+        day_label=day_info["label"],
     )
 
 

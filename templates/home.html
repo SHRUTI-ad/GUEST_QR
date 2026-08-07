@@ -59,34 +59,38 @@
     {% endfor %}
   {% endwith %}
 
+  <p class="section-label">Event day</p>
+  <div class="category-bar" style="margin-bottom: 0.65rem;">
+    {% for d, info in event_meal_days.items() %}
+      <a class="cat-chip {% if day == d %}active{% endif %}"
+         href="{{ url_for('home', category=category or None, day=d, status=status or None, q=q or None) }}">
+        {{ info.label }}
+      </a>
+    {% endfor %}
+  </div>
+
   <div class="stats stats-4">
     <a class="stat {% if not status %}active{% endif %}"
-       href="{{ url_for('home', category=category or None, q=q or None) }}">
+       href="{{ url_for('home', category=category or None, day=day, q=q or None) }}">
       <span>Guests</span><strong>{{ scoped_total }}</strong>
     </a>
-    <a class="stat {% if status == 'arrived' %}active{% endif %}"
-       href="{{ url_for('home', category=category or None, status='arrived', q=q or None) }}">
-      <span>Arrived</span><strong>{{ arrived }}</strong>
-    </a>
-    <a class="stat {% if status == 'lunch' %}active{% endif %}"
-       href="{{ url_for('home', category=category or None, status='lunch', q=q or None) }}">
-      <span>Lunch</span><strong>{{ lunch_claimed }}</strong>
-    </a>
-    <a class="stat {% if status == 'dinner' %}active{% endif %}"
-       href="{{ url_for('home', category=category or None, status='dinner', q=q or None) }}">
-      <span>Dinner</span><strong>{{ dinner_claimed }}</strong>
-    </a>
+    {% for meal in day_meals %}
+      <a class="stat {% if status == meal %}active{% endif %}"
+         href="{{ url_for('home', category=category or None, day=day, status=meal, q=q or None) }}">
+        <span>{{ meal_labels[meal] }}</span><strong>{{ meal_counts.get(meal, 0) }}</strong>
+      </a>
+    {% endfor %}
   </div>
 
   <p class="section-label">Categories</p>
   <div class="category-bar">
     <a class="cat-chip {% if not category %}active{% endif %}"
-       href="{{ url_for('home', status=status or None, q=q or None) }}">
+       href="{{ url_for('home', day=day, status=status or None, q=q or None) }}">
       All <strong>{{ total }}</strong>
     </a>
     {% for cat in categories %}
       <a class="cat-chip {{ category_colors[cat].css }} {% if category == cat %}active{% endif %}"
-         href="{{ url_for('home', category=cat, status=status or None, q=q or None) }}">
+         href="{{ url_for('home', category=cat, day=day, status=status or None, q=q or None) }}">
         {{ cat }} <strong>{{ category_counts.get(cat, 0) }}</strong>
       </a>
     {% endfor %}
@@ -180,6 +184,7 @@
 
   <div class="panel">
     <form method="get" action="{{ url_for('home') }}" class="search-bar">
+      <input type="hidden" name="day" value="{{ day }}" />
       {% if category %}<input type="hidden" name="category" value="{{ category }}" />{% endif %}
       {% if status %}<input type="hidden" name="status" value="{{ status }}" />{% endif %}
       <label class="field">
@@ -196,9 +201,8 @@
   <p class="section-label">
     Showing {{ shown }}
     {% if category %} · {{ category }}{% endif %}
-    {% if status == 'arrived' %} · Arrived{% endif %}
-    {% if status == 'lunch' %} · Lunch done{% endif %}
-    {% if status == 'dinner' %} · Dinner done{% endif %}
+    · {{ day_label }}
+    {% if status in day_meals %} · {{ meal_labels[status] }} done{% endif %}
     {% if q %} · “{{ q }}”{% endif %}
   </p>
 
@@ -217,12 +221,17 @@
           <span class="badge {{ category_colors[cat].css }}">{{ cat }}</span>
         </div>
         <div class="guest-status">
-          {% if g.lunch_claimed %}<span class="badge claimed">Lunch done</span>{% else %}<span class="badge">Lunch pending</span>{% endif %}
-          {% if g.dinner_claimed %}<span class="badge claimed">Dinner done</span>{% else %}<span class="badge">Dinner pending</span>{% endif %}
+          {% for meal in day_meals %}
+            {% if meal_is_claimed(g, day, meal) %}
+              <span class="badge claimed">{{ meal_labels[meal] }} done</span>
+            {% else %}
+              <span class="badge">{{ meal_labels[meal] }} pending</span>
+            {% endif %}
+          {% endfor %}
         </div>
         <div class="row-actions">
           <a class="btn secondary" href="{{ url_for('pdf_ticket', token=g.token) }}">PDF</a>
-          <a class="btn checkin-btn {{ category_colors[cat].css }}" href="{{ url_for('checkin', token=g.token) }}">Check-in</a>
+          <a class="btn checkin-btn {{ category_colors[cat].css }}" href="{{ url_for('checkin', token=g.token, day=day) }}">Check-in</a>
           {% if is_admin %}
             <a class="btn ghost" href="{{ url_for('guest_edit', guest_id=g.id) }}">Edit</a>
             <form method="post" action="{{ url_for('guest_delete', guest_id=g.id) }}" style="display: inline;">

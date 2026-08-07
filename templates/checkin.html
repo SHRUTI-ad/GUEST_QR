@@ -18,7 +18,7 @@
     <div>
       <p class="brand">Check-in{% if guest %} · {{ normalize_category(guest.designation) }}{% endif %}</p>
       <h1>Guest verification</h1>
-      <p class="sub">Same QR for lunch and dinner</p>
+      <p class="sub">Same QR · pick day · mark meal</p>
     </div>
     <nav class="app-nav">
       <a class="btn secondary" href="{{ url_for('scan', auto=1) }}">Scan next</a>
@@ -32,23 +32,30 @@
       Scan next guest
     </a>
   {% else %}
+    <div class="category-bar" style="margin-bottom: 0.75rem;">
+      {% for d, info in event_meal_days.items() %}
+        <a class="cat-chip {% if day == d %}active{% endif %}"
+           href="{{ url_for('checkin', token=guest.token, day=d) }}">
+          {{ info.label }}
+        </a>
+      {% endfor %}
+    </div>
+
     {% if message %}
       <div class="status-banner {% if 'already' in message|lower %}claimed{% else %}ok{% endif %}">{{ message }}</div>
-    {% elif guest.lunch_claimed and guest.dinner_claimed %}
-      <div class="status-banner claimed">Both meals already marked for this guest.</div>
-    {% elif guest.lunch_claimed %}
-      <div class="status-banner arrived">Lunch done — dinner still available.</div>
-    {% elif guest.dinner_claimed %}
-      <div class="status-banner arrived">Dinner done — lunch still available.</div>
+    {% elif status == "claimed" %}
+      <div class="status-banner claimed">All meals for {{ day_label }} already marked.</div>
+    {% elif status == "partial" %}
+      <div class="status-banner arrived">Some meals done for {{ day_label }} — mark remaining below.</div>
     {% else %}
-      <div class="status-banner ok">Valid guest — mark meal below.</div>
+      <div class="status-banner ok">Valid guest — mark {{ day_label }} meal below.</div>
     {% endif %}
 
     <div class="panel">
       <div class="guest-card-top">
         <div>
           <h1 style="font-size: 1.55rem;">{{ guest.name }}</h1>
-          <p class="guest-meta" style="margin-top: 0.35rem;">ID {{ guest.token[:8]|upper }}</p>
+          <p class="guest-meta" style="margin-top: 0.35rem;">ID {{ guest.token[:8]|upper }} · {{ day_label }}</p>
         </div>
         {% set cat = normalize_category(guest.designation) %}
         <span class="badge {{ category_colors[cat].css }}">{{ cat }}</span>
@@ -57,26 +64,52 @@
       <dl class="meta">
         <dt>City</dt><dd>{{ guest.city or '—' }}</dd>
         <dt>Mobile</dt><dd>{{ guest.phone or '—' }}</dd>
-        <dt>Lunch</dt>
-        <dd>{% if guest.lunch_claimed %}Claimed{% if guest.claimed_at %} · {{ guest.claimed_at }}{% endif %}{% else %}Not claimed{% endif %}</dd>
-        <dt>Dinner</dt>
-        <dd>{% if guest.dinner_claimed %}Claimed{% if guest.dinner_claimed_at %} · {{ guest.dinner_claimed_at }}{% endif %}{% else %}Not claimed{% endif %}</dd>
+        {% for meal in day_meals %}
+          <dt>{{ meal_labels[meal] }}</dt>
+          <dd>
+            {% if meal_is_claimed(guest, day, meal) %}
+              Claimed{% set at = meal_claimed_at(guest, day, meal) %}{% if at %} · {{ at }}{% endif %}
+            {% else %}
+              Not claimed
+            {% endif %}
+          </dd>
+        {% endfor %}
       </dl>
 
       <div class="actions checkin-actions" style="margin-top: 1.15rem;">
-        {% if not guest.lunch_claimed %}
-          <form method="post" style="flex: 1 1 100%;">
-            <input type="hidden" name="action" value="lunch" />
-            <button class="btn warn btn-block" type="submit">Mark lunch</button>
-          </form>
-        {% endif %}
-        {% if not guest.dinner_claimed %}
-          <form method="post" style="flex: 1 1 100%;">
-            <input type="hidden" name="action" value="dinner" />
-            <button class="btn btn-block" type="submit">Mark dinner</button>
-          </form>
-        {% endif %}
+        {% for meal in day_meals %}
+          {% if not meal_is_claimed(guest, day, meal) %}
+            <form method="post" style="flex: 1 1 100%;">
+              <input type="hidden" name="day" value="{{ day }}" />
+              <input type="hidden" name="action" value="{{ meal }}" />
+              <button class="btn {% if meal == 'lunch' %}warn{% endif %} btn-block" type="submit">
+                Mark {{ meal_labels[meal]|lower }}
+              </button>
+            </form>
+          {% endif %}
+        {% endfor %}
       </div>
+
+      {% if is_admin %}
+        <div class="panel tools-compact" style="margin-top: 1rem; padding: 0.75rem;">
+          <p class="field-label" style="margin: 0 0 0.45rem;">Admin undo (mistake fix)</p>
+          <div class="actions checkin-actions">
+            {% for meal in day_meals %}
+              {% if meal_is_claimed(guest, day, meal) %}
+                <form method="post" style="flex: 1 1 100%;"
+                      onsubmit="return confirm('Undo {{ meal_labels[meal] }} for {{ day_label }}?');">
+                  <input type="hidden" name="day" value="{{ day }}" />
+                  <input type="hidden" name="action" value="undo_{{ meal }}" />
+                  <button class="btn secondary btn-block" type="submit">
+                    Undo {{ meal_labels[meal]|lower }}
+                  </button>
+                </form>
+              {% endif %}
+            {% endfor %}
+          </div>
+          <p class="help" style="margin-top: 0.45rem;">Only admins see this. Staff cannot undo.</p>
+        </div>
+      {% endif %}
 
       <a class="btn btn-block scan-next-btn" href="{{ url_for('scan', auto=1) }}" style="margin-top: 0.85rem;">
         Scan next guest
