@@ -2094,10 +2094,10 @@ def health():
 # Runs for both `python app.py` and gunicorn (Render / production)
 init_db()
 try:
-    _conn = get_db()
-    _count = _conn.execute("SELECT COUNT(*) AS c FROM guests").fetchone()["c"]
-    _conn.close()
-    if _count == 0 and any(path.exists() for path, _cat in FIXED_GUEST_EXCELS):
+    # Always re-sync from fixed Excels on boot so GitHub/Render Excel updates
+    # show in the UI after redeploy (not only when DB is empty).
+    # Same name+phone keeps QR + meal check-in marks (see sync_guests_from_rows).
+    if any(path.exists() for path, _cat in FIXED_GUEST_EXCELS):
         with app.app_context():
             load_fixed_guest_excels(replace_all=True)
 except Exception:
