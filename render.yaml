@@ -1,3 +1,8 @@
+# Check-ins live in SQLite. On the free plan, disk is wiped on every deploy.
+# To keep meal marks across redeploys: use a paid plan + Persistent Disk, then:
+#   disks: mountPath /var/data
+#   env DB_PATH=/var/data/guests.db
+# During the event, prefer Admin → Reload Excel (no redeploy) for list updates.
 services:
   - type: web
     name: guest-qr
@@ -14,3 +19,11 @@ services:
         sync: false
       - key: PUBLIC_BASE_URL
         sync: false
+      # Google Sheet check-in backup (Apps Script Web App URL)
+      - key: CHECKIN_SHEET_WEBHOOK
+        sync: false
+      - key: CHECKIN_SHEET_SECRET
+        sync: false
+      # Set this only after attaching a Persistent Disk at /var/data
+      # - key: DB_PATH
+      #   value: /var/data/guests.db

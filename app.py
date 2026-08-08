@@ -39,8 +39,15 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "guests.db"
+# On Render free, local disk is wiped on every deploy. Set DB_PATH to a
+# Persistent Disk mount (e.g. /var/data/guests.db) so check-ins survive.
+DB_PATH = Path(os.environ.get("DB_PATH", str(BASE_DIR / "guests.db")))
+CHECKIN_BACKUP_PATH = DB_PATH.parent / "checkin_backup.json"
 EMAIL_CONFIG_PATH = BASE_DIR / "email_config.json"
+# Google Sheet backup: paste the Apps Script Web App URL in Render → Environment
+# as CHECKIN_SHEET_WEBHOOK (do not commit secrets). Optional CHECKIN_SHEET_SECRET.
+CHECKIN_SHEET_WEBHOOK = (os.environ.get("CHECKIN_SHEET_WEBHOOK") or "").strip()
+CHECKIN_SHEET_SECRET = (os.environ.get("CHECKIN_SHEET_SECRET") or "").strip()
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "event-guest-qr-dev-key")
@@ -353,7 +360,33 @@ def init_db() -> None:
         )
         """
     )
+    # Meal check-ins by identity (survives guest-row delete / Excel reload)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS guest_checkin_registry (
+            identity_key TEXT PRIMARY KEY,
+            token TEXT,
+            name TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            arrived INTEGER NOT NULL DEFAULT 0,
+            arrived_at TEXT,
+            lunch_claimed INTEGER NOT NULL DEFAULT 0,
+            claimed_at TEXT,
+            dinner_claimed INTEGER NOT NULL DEFAULT 0,
+            dinner_claimed_at TEXT,
+            breakfast_d1_claimed INTEGER NOT NULL DEFAULT 0,
+            breakfast_d1_claimed_at TEXT,
+            breakfast_d2_claimed INTEGER NOT NULL DEFAULT 0,
+            breakfast_d2_claimed_at TEXT,
+            lunch_d2_claimed INTEGER NOT NULL DEFAULT 0,
+            lunch_d2_claimed_at TEXT,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
     _backfill_qr_registry(conn)
+    _backfill_checkin_registry(conn)
+    _load_checkin_backup_file(conn)
 
     conn.commit()
     conn.close()
@@ -476,11 +509,15 @@ _CHECKIN_RESTORE_COLS = (
 )
 
 
-def _snapshot_checkins(row: sqlite3.Row) -> dict:
+def _snapshot_checkins(row: sqlite3.Row | dict) -> dict:
     snap = {}
     for col in _CHECKIN_RESTORE_COLS:
         try:
-            snap[col] = row[col]
+            if isinstance(row, dict):
+                if col in row:
+                    snap[col] = row[col]
+            else:
+                snap[col] = row[col]
         except (IndexError, KeyError):
             continue
     return snap
@@ -502,6 +539,128 @@ def _restore_checkins(conn: sqlite3.Connection, guest_id: int, snap: dict) -> No
     conn.execute(f"UPDATE guests SET {', '.join(sets)} WHERE id = ?", vals)
 
 
+def _persist_guest_checkins(conn: sqlite3.Connection, guest_row: sqlite3.Row | dict) -> None:
+    """Write check-ins to registry + JSON backup (survives Excel reload)."""
+    _upsert_checkin_registry(conn, guest_row)
+    _write_checkin_backup_file(conn)
+
+
+def _backfill_checkin_registry(conn: sqlite3.Connection) -> None:
+    """Copy current guest check-ins into permanent registry."""
+    try:
+        rows = conn.execute("SELECT * FROM guests").fetchall()
+    except sqlite3.Error:
+        return
+    for row in rows:
+        _upsert_checkin_registry(conn, row)
+
+
+def _upsert_checkin_registry(conn: sqlite3.Connection, row: sqlite3.Row | dict) -> None:
+    """Save check-in marks for name+phone (survives guest DELETE / Excel reload)."""
+    if isinstance(row, dict):
+        name = row.get("name") or ""
+        phone = row.get("phone") or ""
+        token = row.get("token") or ""
+        snap = _snapshot_checkins(row)
+    else:
+        name = row["name"] or ""
+        phone = row["phone"] or ""
+        try:
+            token = row["token"] or ""
+        except (IndexError, KeyError):
+            token = ""
+        snap = _snapshot_checkins(row)
+    key = _guest_identity_key(name, phone)
+    if not key.split("|")[0] or not key.split("|")[1]:
+        return
+    now = _stamp()
+    cols = ", ".join(_CHECKIN_RESTORE_COLS)
+    placeholders = ", ".join("?" for _ in _CHECKIN_RESTORE_COLS)
+    updates = ", ".join(f"{c} = excluded.{c}" for c in _CHECKIN_RESTORE_COLS)
+    values = [snap.get(c, 0 if c.endswith("_claimed") or c == "arrived" else None) for c in _CHECKIN_RESTORE_COLS]
+    # Prefer keeping previously claimed=1 if new snap is empty zeros after a wipe-race
+    conn.execute(
+        f"""
+        INSERT INTO guest_checkin_registry
+            (identity_key, token, name, phone, {cols}, updated_at)
+        VALUES (?, ?, ?, ?, {placeholders}, ?)
+        ON CONFLICT(identity_key) DO UPDATE SET
+            token = excluded.token,
+            name = excluded.name,
+            phone = excluded.phone,
+            {updates},
+            updated_at = excluded.updated_at
+        """,
+        (key, token, name.strip(), phone, *values, now),
+    )
+
+
+def _checkin_registry_map(conn: sqlite3.Connection) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    try:
+        rows = conn.execute("SELECT * FROM guest_checkin_registry").fetchall()
+    except sqlite3.Error:
+        return out
+    for row in rows:
+        out[row["identity_key"]] = _snapshot_checkins(row)
+    return out
+
+
+def _write_checkin_backup_file(conn: sqlite3.Connection) -> None:
+    """Mirror registry to JSON beside DB (same disk; use Persistent Disk on Render)."""
+    try:
+        rows = conn.execute("SELECT * FROM guest_checkin_registry").fetchall()
+        payload = []
+        for row in rows:
+            item = {
+                "identity_key": row["identity_key"],
+                "token": row["token"],
+                "name": row["name"],
+                "phone": row["phone"],
+            }
+            item.update(_snapshot_checkins(row))
+            payload.append(item)
+        CHECKIN_BACKUP_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CHECKIN_BACKUP_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
+def _load_checkin_backup_file(conn: sqlite3.Connection) -> None:
+    """Restore registry from JSON only for identities missing from DB.
+
+    Does not OR into existing rows — that would undo an admin Undo if an older
+    backup still had claimed=1.
+    """
+    if not CHECKIN_BACKUP_PATH.is_file():
+        return
+    try:
+        payload = json.loads(CHECKIN_BACKUP_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if not isinstance(payload, list):
+        return
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("identity_key") or _guest_identity_key(
+            item.get("name") or "", item.get("phone") or ""
+        )
+        if not key or "|" not in key:
+            continue
+        existing = conn.execute(
+            "SELECT 1 FROM guest_checkin_registry WHERE identity_key = ?", (key,)
+        ).fetchone()
+        if existing:
+            continue
+        row = dict(item)
+        row["name"] = row.get("name") or ""
+        row["phone"] = row.get("phone") or ""
+        _upsert_checkin_registry(conn, row)
+
+
 def sync_guests_from_rows(
     rows: list[dict],
     *,
@@ -521,14 +680,16 @@ def sync_guests_from_rows(
     """
     conn = get_db()
     _backfill_qr_registry(conn)
+    # Guest rows are source of truth (includes admin Undo=0), then fill gaps
+    # from JSON backup only for identities not already in the registry.
+    _backfill_checkin_registry(conn)
+    _load_checkin_backup_file(conn)
 
-    # Save check-ins by identity so Reload / replace_all does not wipe today's marks
-    checkin_by_identity: dict[str, dict] = {}
     existing_pre = conn.execute("SELECT * FROM guests").fetchall()
     for row in existing_pre:
-        key = _guest_identity_key(row["name"], row["phone"])
-        checkin_by_identity[key] = _snapshot_checkins(row)
         _remember_qr_token(conn, row["name"], row["phone"], row["token"])
+    # Registry (after guest backfill) is what we restore after DELETE / re-import
+    checkin_by_identity = _checkin_registry_map(conn)
 
     if replace_all:
         conn.execute("DELETE FROM guests")
@@ -623,13 +784,18 @@ def sync_guests_from_rows(
         if not replace_all and scope is None:
             # Full-file sync: remove anyone missing from the file
             _remember_qr_token(conn, old["name"], old["phone"], old["token"])
+            # Keep meal marks in registry even if guest row is removed from Excel
+            _upsert_checkin_registry(conn, old)
             conn.execute("DELETE FROM guests WHERE id = ?", (old["id"],))
             removed += 1
         elif scope:
             _remember_qr_token(conn, old["name"], old["phone"], old["token"])
+            _upsert_checkin_registry(conn, old)
             conn.execute("DELETE FROM guests WHERE id = ?", (old["id"],))
             removed += 1
 
+    _backfill_checkin_registry(conn)
+    _write_checkin_backup_file(conn)
     conn.commit()
     total = conn.execute("SELECT COUNT(*) AS c FROM guests").fetchone()["c"]
     conn.close()
@@ -1978,6 +2144,59 @@ def _mark_arrived_if_needed(conn: sqlite3.Connection, guest: sqlite3.Row, token:
         )
 
 
+def _log_checkin_to_sheet(
+    guest: sqlite3.Row | dict,
+    *,
+    day: int,
+    day_label: str,
+    meal: str,
+    action: str,
+    stamped_at: str,
+) -> None:
+    """Append check-in mark/undo to Google Sheet via Apps Script webhook (best-effort)."""
+    if not CHECKIN_SHEET_WEBHOOK:
+        return
+    try:
+        if isinstance(guest, dict):
+            name = guest.get("name") or ""
+            phone = guest.get("phone") or ""
+            category = guest.get("designation") or ""
+            token = guest.get("token") or ""
+        else:
+            name = guest["name"] or ""
+            phone = guest["phone"] or ""
+            try:
+                category = guest["designation"] or ""
+            except (IndexError, KeyError):
+                category = ""
+            token = guest["token"] or ""
+        payload = {
+            "secret": CHECKIN_SHEET_SECRET,
+            "timestamp": stamped_at,
+            "name": name,
+            "phone": phone,
+            "category": category,
+            "day": day,
+            "day_label": day_label,
+            "meal": meal,
+            "meal_label": MEAL_LABELS.get(meal, meal),
+            "action": action,  # mark | undo
+            "token": token,
+        }
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            CHECKIN_SHEET_WEBHOOK,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            resp.read()
+    except Exception:
+        # Never block live check-in if Sheet is down
+        pass
+
+
 @app.route("/checkin/<token>", methods=["GET", "POST"])
 @login_required
 def checkin(token: str):
@@ -2009,6 +2228,7 @@ def checkin(token: str):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         is_admin_user = session.get("role") == "admin"
         conn = get_db()
+        sheet_log: tuple[str, str] | None = None  # (action, meal)
 
         if action in day_meals:
             claim_col, at_col = MEAL_CLAIM_COLUMNS[(day, action)]
@@ -2022,6 +2242,7 @@ def checkin(token: str):
                     (now, token),
                 )
                 message = f"{MEAL_LABELS[action]} marked for {day_info['label']}."
+                sheet_log = ("mark", action)
         elif action.startswith("undo_"):
             if not is_admin_user:
                 message = "Undo is admin-only."
@@ -2042,14 +2263,33 @@ def checkin(token: str):
                         message = (
                             f"{MEAL_LABELS[undo_target]} undone for {day_info['label']}."
                         )
+                        sheet_log = ("undo", undo_target)
                 else:
                     message = "Cannot undo that meal for this day."
         else:
             message = "Unknown action or meal not available for this day."
 
+        # Persist marks outside the guests table so Excel reload / sync cannot clear them
+        # unless admin purposely undoes (that also updates the registry).
+        refreshed = conn.execute(
+            "SELECT * FROM guests WHERE token = ?", (token,)
+        ).fetchone()
+        if refreshed is not None:
+            _persist_guest_checkins(conn, refreshed)
+
         conn.commit()
         conn.close()
         guest = get_guest_by_token(token)
+
+        if sheet_log is not None and guest is not None:
+            _log_checkin_to_sheet(
+                guest,
+                day=day,
+                day_label=day_info["label"],
+                meal=sheet_log[1],
+                action=sheet_log[0],
+                stamped_at=now,
+            )
 
     claimed_today = [m for m in day_meals if meal_is_claimed(guest, day, m)]
     if day_meals and len(claimed_today) == len(day_meals):
