@@ -459,6 +459,49 @@ def _insert_sample_guests(conn: sqlite3.Connection) -> None:
         )
 
 
+# Meal / arrival columns restored after Excel reload (same name+phone).
+_CHECKIN_RESTORE_COLS = (
+    "arrived",
+    "arrived_at",
+    "lunch_claimed",
+    "claimed_at",
+    "dinner_claimed",
+    "dinner_claimed_at",
+    "breakfast_d1_claimed",
+    "breakfast_d1_claimed_at",
+    "breakfast_d2_claimed",
+    "breakfast_d2_claimed_at",
+    "lunch_d2_claimed",
+    "lunch_d2_claimed_at",
+)
+
+
+def _snapshot_checkins(row: sqlite3.Row) -> dict:
+    snap = {}
+    for col in _CHECKIN_RESTORE_COLS:
+        try:
+            snap[col] = row[col]
+        except (IndexError, KeyError):
+            continue
+    return snap
+
+
+def _restore_checkins(conn: sqlite3.Connection, guest_id: int, snap: dict) -> None:
+    if not snap:
+        return
+    sets = []
+    vals = []
+    for col in _CHECKIN_RESTORE_COLS:
+        if col not in snap:
+            continue
+        sets.append(f"{col} = ?")
+        vals.append(snap[col])
+    if not sets:
+        return
+    vals.append(guest_id)
+    conn.execute(f"UPDATE guests SET {', '.join(sets)} WHERE id = ?", vals)
+
+
 def sync_guests_from_rows(
     rows: list[dict],
     *,
@@ -472,21 +515,26 @@ def sync_guests_from_rows(
     Tokens are also stored in guest_qr_registry so Clear All + re-import restores
     the same QR for printing.
 
-    replace_all: wipe every guest first, then import (registry kept).
+    replace_all: wipe every guest first, then import (registry + check-ins for
+    matching name+phone are restored).
     category_scope: only remove missing guests in that category (other categories kept).
     """
     conn = get_db()
     _backfill_qr_registry(conn)
 
+    # Save check-ins by identity so Reload / replace_all does not wipe today's marks
+    checkin_by_identity: dict[str, dict] = {}
+    existing_pre = conn.execute("SELECT * FROM guests").fetchall()
+    for row in existing_pre:
+        key = _guest_identity_key(row["name"], row["phone"])
+        checkin_by_identity[key] = _snapshot_checkins(row)
+        _remember_qr_token(conn, row["name"], row["phone"], row["token"])
+
     if replace_all:
-        # Save QR map, then clear live list only (registry stays)
-        existing_pre = conn.execute("SELECT name, phone, token FROM guests").fetchall()
-        for row in existing_pre:
-            _remember_qr_token(conn, row["name"], row["phone"], row["token"])
         conn.execute("DELETE FROM guests")
         existing = []
     else:
-        existing = conn.execute("SELECT * FROM guests").fetchall()
+        existing = list(existing_pre)
 
     by_identity = {
         _guest_identity_key(row["name"], row["phone"]): row for row in existing
@@ -534,6 +582,9 @@ def sync_guests_from_rows(
                 ),
             )
             _remember_qr_token(conn, guest["name"], guest.get("phone") or "", old["token"])
+            # UPDATE path already kept check-in columns; re-apply snapshot if needed
+            if key in checkin_by_identity:
+                _restore_checkins(conn, old["id"], checkin_by_identity[key])
             kept += 1
         else:
             payload = dict(guest)
@@ -553,6 +604,11 @@ def sync_guests_from_rows(
                 """,
                 _guest_insert_values(payload, token=token),
             )
+            new_id = conn.execute(
+                "SELECT id FROM guests WHERE token = ?", (token,)
+            ).fetchone()["id"]
+            if key in checkin_by_identity:
+                _restore_checkins(conn, new_id, checkin_by_identity[key])
             if had_token:
                 restored += 1
             else:
